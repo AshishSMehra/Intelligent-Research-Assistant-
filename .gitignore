@@ -136,6 +136,7 @@ celerybeat.pid
 
 # Environments
 .env
+.venv/
 
 # Python
 __pycache__/
@@ -149,6 +150,10 @@ __pycache__/
 
 # Log files
 logs/
+uploads/
+
+# Database and storage
+qdrant_storage/
 
 # Spyder project settings
 .spyderproject

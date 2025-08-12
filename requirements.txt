@@ -1,7 +1,8 @@
-fastapi
-uvicorn
-pydantic
+Flask
 loguru
-python-jose[cryptography]
-SQLAlchemy
-databases[postgresql]
+requests
+pymupdf
+qdrant-client
+sentence-transformers
+openai
+tiktoken
