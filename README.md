@@ -1,108 +1,116 @@
 # Intelligent Research Assistant
 
-A production-ready document processing and vector search system built with Flask, PyMuPDF, and Qdrant. This system extracts text from PDFs, processes it with advanced chunking algorithms, and stores it as searchable vectors for intelligent document retrieval.
+> A production-ready RAG (Retrieval-Augmented Generation) system that transforms PDFs into searchable knowledge bases using advanced NLP and vector search.
 
-## 🚀 Features
+**For**: Researchers, developers, and organizations needing intelligent document processing and semantic search capabilities.
 
-### 📄 **Advanced PDF Processing**
-- **Multi-format support**: PDF text extraction with PyMuPDF
-- **Page structure preservation**: Maintains document page boundaries
-- **Edge case handling**: Empty pages, scanned content, corrupted files
-- **Quality analysis**: Automatic detection of OCR candidates and content issues
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
+[![Flask](https://img.shields.io/badge/Flask-2.0+-green.svg)](https://flask.palletsprojects.com)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Qdrant](https://img.shields.io/badge/Qdrant-Vector%20DB-orange.svg)](https://qdrant.tech)
 
-### 🧠 **Intelligent Text Chunking**
-- **Smart boundaries**: Respects paragraphs, sentences, and page breaks
-- **Configurable overlap**: Customizable chunk size and overlap parameters
-- **Metadata preservation**: Tracks source pages, document IDs, and quality metrics
-- **Production-ready**: Handles edge cases and large documents efficiently
+## 📋 Table of Contents
 
-### 🔍 **Vector Search Ready**
-- **Qdrant integration**: High-performance vector database
-- **Embedding generation**: Uses SentenceTransformers for semantic vectors
-- **Rich metadata**: Stores document context, page information, and quality data
-- **Scalable architecture**: Ready for similarity search and RAG applications
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Prerequisites](#-prerequisites)
+- [Quick Start](#-quick-start)
+- [Configuration](#-configuration)
+- [API Usage](#-api-usage)
+- [Project Structure](#-project-structure)
+- [Data Schema](#-data-schema)
+- [Deployment](#-deployment)
+- [Troubleshooting](#-troubleshooting)
+- [Security](#-security)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [License](#-license)
 
-### 🛡️ **Production Features**
-- **Comprehensive logging**: Detailed processing logs with Loguru
-- **Error handling**: Graceful degradation and fallback processing
-- **Quality assessment**: Automatic PDF quality scoring and recommendations
-- **API documentation**: Swagger/OpenAPI integration
+## ✨ Features
+
+- **📄 Process PDFs** - Extract text with page structure preservation and edge case handling
+- **🧩 Smart Chunking** - Intelligent text segmentation with configurable overlap and boundary detection
+- **🧠 Generate Embeddings** - GPU-accelerated vector generation using SentenceTransformers
+- **💾 Store Vectors** - High-performance vector database with rich metadata (21+ fields)
+- **🔍 Semantic Search** - Real-time similarity search with configurable thresholds
+- **📊 Monitor Quality** - Automatic PDF analysis, OCR detection, and quality scoring
+- **🌐 REST API** - Complete API with Swagger documentation and 6 endpoints
+- **⚡ Production Ready** - Comprehensive logging, error handling, and performance optimization
 
 ## 🏗️ Architecture
 
 ```
-PDF Upload → Text Extraction → Smart Chunking → Vector Embeddings → Qdrant Storage
-     ↓              ↓              ↓              ↓              ↓
-  Flask API    PyMuPDF      Boundary-Aware    Sentence      Vector DB
-                              Chunking      Transformers    (Qdrant)
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   PDF       │    │   Text       │    │   Smart     │    │   Vector    │    │   Qdrant    │
+│   Upload    │───▶│  Extraction  │───▶│  Chunking   │───▶│ Embeddings  │───▶│   Storage   │
+│  (Flask)    │    │ (PyMuPDF)    │    │(Boundary)   │    │(SentenceT)  │    │ (Vector DB) │
+└─────────────┘    └──────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
 ```
+
+**Tech Stack:**
+- **Backend**: Flask, PyMuPDF, SentenceTransformers
+- **Vector DB**: Qdrant (Docker)
+- **ML**: all-MiniLM-L6-v2 (384D embeddings)
+- **Hardware**: MPS/GPU acceleration support
+- **Monitoring**: Loguru logging, real-time stats
 
 ## 📋 Prerequisites
 
 - **Python 3.8+**
 - **Docker** (for Qdrant vector database)
 - **Git**
+- **8GB+ RAM** (for large document processing)
+- **macOS/Linux/Windows** (tested on Apple Silicon)
 
 ## 🚀 Quick Start
 
-### 1. Clone the Repository
-
+### 1. Clone & Setup
 ```bash
 git clone <repository-url>
 cd Intelligent-Research-Assistant-
-```
-
-### 2. Set Up Virtual Environment
-
-**On macOS/Linux:**
-```bash
 python3 -m venv .venv
-source .venv/bin/activate
-```
-
-**On Windows:**
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-```
-
-### 3. Install Dependencies
-
-```bash
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 4. Start Qdrant Vector Database
-
+### 2. Start Vector Database
 ```bash
 docker run -d -p 6333:6333 -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
 ```
 
-### 5. Run the Application
-
+### 3. Run Application
 ```bash
 python app.py
 ```
 
-The application will be available at `http://127.0.0.1:8008`
+Visit `http://127.0.0.1:8008` for the API and `http://127.0.0.1:8008/apidocs/` for interactive docs.
 
-## 📚 API Documentation
+## ⚙️ Configuration
 
-### Interactive API Docs
-Visit `http://127.0.0.1:8008/apidocs/` for interactive Swagger documentation.
-
-### Core Endpoints
-
-#### `POST /upload`
-Upload and process PDF documents.
-
-**File Upload:**
-```bash
-curl -X POST -F "file=@/path/to/document.pdf" http://127.0.0.1:8008/upload
+Create `.env` file:
+```env
+FLASK_ENV=development
+FLASK_DEBUG=True
+UPLOAD_FOLDER=uploads
+MAX_CONTENT_LENGTH=16777216
 ```
 
-**URL Upload:**
+**Key Settings** (in `src/pipeline/pipeline.py`):
+```python
+CHUNK_SIZE = 500          # Characters per chunk
+CHUNK_OVERLAP = 100       # Overlap between chunks
+VECTOR_SIZE = 384         # Embedding dimensions
+COLLECTION_NAME = "research_documents"
+```
+
+## 🔌 API Usage
+
+### Upload PDF Document
 ```bash
+# File upload
+curl -X POST -F "file=@document.pdf" http://127.0.0.1:8008/upload
+
+# URL upload
 curl -X POST -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/document.pdf"}' \
   http://127.0.0.1:8008/upload
@@ -116,159 +124,257 @@ curl -X POST -H "Content-Type: application/json" \
 }
 ```
 
-#### `GET /health`
-Health check endpoint.
+### Semantic Search
 ```bash
-curl http://127.0.0.1:8008/health
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"query": "machine learning algorithms", "limit": 5}' \
+  http://127.0.0.1:8008/search
 ```
 
-#### `GET /`
-Welcome message and API information.
-
-## 🔧 Configuration
-
-### Environment Variables
-Create a `.env` file for custom configuration:
-```env
-FLASK_ENV=development
-FLASK_DEBUG=True
+**Response:**
+```json
+{
+  "status": "success",
+  "query": "machine learning algorithms",
+  "results_count": 3,
+  "results": [
+    {
+      "id": "point-id",
+      "score": 0.847,
+      "text": "Machine learning is a subset of artificial intelligence...",
+      "document_id": "doc-uuid",
+      "source_pages": [1]
+    }
+  ]
+}
 ```
 
-### Chunking Parameters
-Modify chunking behavior in `src/pipeline/pipeline.py`:
-```python
-# Default settings
-chunk_size = 1000      # ~500 tokens
-chunk_overlap = 100    # ~50 tokens
+### Get Document Chunks
+```bash
+curl "http://127.0.0.1:8008/documents/doc-uuid?include_text=true"
 ```
 
-### Qdrant Configuration
-Vector database settings in `src/pipeline/pipeline.py`:
-```python
-COLLECTION_NAME = "research_documents"
-VECTOR_SIZE = 384      # all-MiniLM-L6-v2 model
+### Collection Statistics
+```bash
+curl http://127.0.0.1:8008/collection-stats
 ```
 
-## 📊 Processing Pipeline
+## 📁 Project Structure
 
-### 1. **Document Upload**
-- Supports direct file upload and URL-based downloads
-- Automatic file validation and error handling
-- Generates unique document IDs for tracking
-
-### 2. **Text Extraction**
-- **Page-by-page processing** with metadata preservation
-- **Edge case detection**: Empty pages, scanned content, corrupted files
-- **Quality analysis**: Character density, image detection, OCR recommendations
-- **Performance monitoring**: Processing time tracking per page
-
-### 3. **Smart Chunking**
-- **Boundary-aware**: Respects paragraphs (`\n\n`), sentences (`.!?`), and page breaks
-- **Configurable overlap**: Prevents context loss between chunks
-- **Metadata enrichment**: Source pages, quality issues, content type flags
-- **Edge case handling**: Large overlaps, exact size text, empty content
-
-### 4. **Vector Generation**
-- **SentenceTransformers**: Uses `all-MiniLM-L6-v2` for fast, quality embeddings
-- **384-dimensional vectors**: Optimized for speed and accuracy
-- **Batch processing**: Efficient handling of multiple chunks
-
-### 5. **Vector Storage**
-- **Qdrant integration**: High-performance vector database
-- **Rich metadata**: Document context, page tracking, quality metrics
-- **Auto-collection creation**: Seamless setup and management
-
-## 🛠️ Development
-
-### Project Structure
 ```
 Intelligent-Research-Assistant-/
-├── app.py                 # Flask application
-├── requirements.txt       # Python dependencies
+├── app.py                    # Flask application & API endpoints
+├── requirements.txt          # Python dependencies
 ├── src/
 │   └── pipeline/
-│       └── pipeline.py    # Core processing pipeline
-├── uploads/              # Document upload directory
-├── logs/                 # Application logs
-└── qdrant_storage/       # Vector database storage (auto-created)
+│       └── pipeline.py       # Core RAG pipeline (Steps 1-5)
+├── uploads/                  # Document storage
+├── logs/                     # Application logs
+├── qdrant_storage/          # Vector database files
+└── .env.example             # Environment template
 ```
 
-### Key Components
+**Key Files:**
+- `app.py` - API endpoints, file handling, error management
+- `src/pipeline/pipeline.py` - Complete RAG pipeline implementation
+- `logging_config.py` - Structured logging configuration
 
-#### `src/pipeline/pipeline.py`
-Unified processing pipeline with functions:
-- `extract_pages_from_pdf()`: Advanced PDF processing with edge case handling
-- `chunk_text_with_pages()`: Smart chunking with metadata preservation
-- `generate_embeddings()`: Vector generation with SentenceTransformers
-- `store_embeddings_with_metadata()`: Qdrant storage with rich metadata
-- `analyze_pdf_quality()`: Comprehensive quality assessment
+## 🗄️ Data Schema
 
-#### Enhanced Features
-- **Page structure preservation**: Maintains document organization
-- **Quality analysis**: Automatic detection of content issues
-- **Performance optimization**: Efficient processing of large documents
-- **Production logging**: Detailed processing insights
+### Vector Database (Qdrant)
+**Collection**: `research_documents`
+**Vector Size**: 384 dimensions (all-MiniLM-L6-v2)
 
-## 📈 Performance
+**Point Payload Schema:**
+```json
+{
+  "document_id": "uuid",
+  "chunk_id": 0,
+  "text": "chunk content",
+  "char_count": 500,
+  "source_pages": [1, 2],
+  "has_scanned_content": false,
+  "quality_issues": [],
+  "created_at": 1692123456,
+  "embedding_model": "all-MiniLM-L6-v2",
+  "tags": ["research", "ml"],
+  "custom_metadata": {}
+}
+```
 
-### Processing Capabilities
-- **Document size**: Handles PDFs from 1KB to 100MB+
-- **Page count**: Efficiently processes 1-1000+ pages
-- **Chunking speed**: ~1000 chunks/second on modern hardware
-- **Vector generation**: ~100 embeddings/second with GPU acceleration
+### Processing Pipeline Data Flow
+1. **PDF Input** → Page extraction with metadata
+2. **Text Chunks** → Boundary-aware segmentation
+3. **Embeddings** → 384D vectors with normalization
+4. **Vector Storage** → Qdrant with 21+ metadata fields
 
-### Storage Efficiency
-- **Vector compression**: Optimized storage in Qdrant
-- **Metadata indexing**: Fast retrieval of document context
-- **Automatic cleanup**: Efficient garbage collection
+## 🚀 Deployment
 
-## 🔍 Quality Features
+### Docker Compose
+```yaml
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "8008:8008"
+    environment:
+      - FLASK_ENV=production
+    depends_on:
+      - qdrant
+  
+  qdrant:
+    image: qdrant/qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
 
-### PDF Analysis
-- **Content detection**: Identifies text vs. image-heavy pages
-- **OCR recommendations**: Flags scanned content for processing
-- **Quality scoring**: Overall document quality assessment
-- **Issue reporting**: Detailed analysis of content problems
+volumes:
+  qdrant_data:
+```
 
-### Processing Insights
-- **Performance metrics**: Processing time per page and document
-- **Quality recommendations**: Suggestions for content improvement
-- **Error handling**: Graceful degradation for problematic files
+### Cloud Deployment
+1. **AWS/GCP**: Use managed container services
+2. **Qdrant Cloud**: Replace local Qdrant with cloud instance
+3. **Environment**: Set production environment variables
+4. **Scaling**: Horizontal scaling with load balancer
 
-## 🚀 Future Enhancements
+## 🔧 Troubleshooting
 
-### Planned Features
-- **OCR integration**: Automatic text extraction from scanned pages
-- **Search API**: Vector similarity search endpoints
-- **RAG implementation**: Retrieval-augmented generation
-- **Multi-format support**: DOCX, TXT, and other document types
-- **Batch processing**: Efficient handling of multiple documents
+### Common Issues
 
-### Scalability Improvements
-- **Distributed processing**: Multi-worker document processing
-- **Cloud storage**: Integration with S3, GCS, etc.
-- **Advanced indexing**: Hierarchical document organization
-- **Real-time updates**: Live document processing status
+**Qdrant Connection Failed**
+```bash
+# Check if Docker is running
+docker ps | grep qdrant
+
+# Restart Qdrant container
+docker restart qdrant-container
+```
+
+**PDF Processing Errors**
+```bash
+# Check file permissions
+ls -la uploads/
+
+# Verify PDF integrity
+file document.pdf
+```
+
+**Memory Issues**
+```bash
+# Increase Docker memory limit
+docker run -m 4g -p 6333:6333 qdrant/qdrant
+
+# Monitor memory usage
+docker stats
+```
+
+**Embedding Model Loading**
+```bash
+# Clear model cache
+rm -rf ~/.cache/torch/sentence_transformers/
+
+# Check GPU availability
+python -c "import torch; print(torch.backends.mps.is_available())"
+```
+
+### Performance Tuning
+- **Batch Size**: Adjust `batch_size` in embedding generation
+- **Chunk Size**: Optimize `chunk_size` for your documents
+- **Memory**: Increase Docker memory for large documents
+- **GPU**: Enable MPS/CUDA for faster embeddings
+
+## 🔒 Security
+
+### Data Privacy
+- **Local Processing**: All data processed locally, no external API calls
+- **File Storage**: Temporary file storage with automatic cleanup
+- **Vector DB**: Local Qdrant instance, no data sent to cloud services
+
+### Security Measures
+- **Input Validation**: Comprehensive file type and size validation
+- **Error Handling**: No sensitive data in error messages
+- **Access Control**: No authentication (add for production use)
+- **File Sanitization**: Secure file handling and cleanup
+
+### Production Security Checklist
+- [ ] Add authentication/authorization
+- [ ] Enable HTTPS
+- [ ] Implement rate limiting
+- [ ] Add input sanitization
+- [ ] Configure CORS policies
+- [ ] Set up monitoring and alerting
+
+## 🗺️ Roadmap
+
+### Near-term (Q1 2024)
+- [ ] **OCR Integration** - Automatic text extraction from scanned pages
+- [ ] **Multi-format Support** - DOCX, TXT, and other document types
+- [ ] **Batch Processing** - Efficient handling of multiple documents
+- [ ] **Advanced Search** - Filtering by document type, date, quality
+- [ ] **RAG Implementation** - Retrieval-augmented generation endpoints
+
+### Medium-term (Q2 2024)
+- [ ] **Cloud Storage** - S3/GCS integration for document storage
+- [ ] **Distributed Processing** - Multi-worker document processing
+- [ ] **Real-time Updates** - Live document processing status
+- [ ] **Advanced Analytics** - Processing insights and performance metrics
+
+### Long-term (Q3 2024+)
+- [ ] **Multi-language Support** - Internationalization and localization
+- [ ] **Advanced ML Models** - Custom embedding models and fine-tuning
+- [ ] **Enterprise Features** - SSO, audit logs, compliance features
 
 ## 🤝 Contributing
 
+We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md).
+
+### Development Setup
+```bash
+git clone <repository-url>
+cd Intelligent-Research-Assistant-
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -r requirements-dev.txt  # Development dependencies
+```
+
+### Code Style
+- **Python**: Follow PEP 8 with Black formatting
+- **Tests**: Write unit tests for new features
+- **Documentation**: Update README and docstrings
+- **Commits**: Use conventional commit messages
+
+### Pull Request Process
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create feature branch (`git checkout -b feature/amazing-feature`)
+3. Make changes and add tests
+4. Run tests (`python -m pytest`)
+5. Submit pull request with description
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
-## 🆘 Support
+### Acknowledgments
+- **SentenceTransformers** - For high-quality embeddings
+- **Qdrant** - For the excellent vector database
+- **PyMuPDF** - For robust PDF processing
+- **Flask** - For the web framework
 
-For issues and questions:
-- Check the [API documentation](http://127.0.0.1:8008/apidocs/)
-- Review the processing logs in `logs/app.log`
-- Open an issue on GitHub
+## 👥 Maintainers
+
+**Ashish Mehra** - [GitHub](https://github.com/ashishsmehra)
+
+### Contact
+- **Issues**: [GitHub Issues](https://github.com/ashishsmehra/Intelligent-Research-Assistant-/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/ashishsmehra/Intelligent-Research-Assistant-/discussions)
+- **Email**: [Your Email]
 
 ---
 
 **Built with ❤️ for intelligent document processing and search**
+
+*Star this repository if it helped you! ⭐*
