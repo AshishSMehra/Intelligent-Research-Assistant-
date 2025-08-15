@@ -243,7 +243,7 @@ def extract_pages_from_pdf(file_path: str) -> List[dict]:
 # Text Chunking
 # -----------------------------------------------------------------------------
 
-def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 100) -> List[str]:
+def chunk_text(text: str, chunk_size: int = 500, chunk_overlap: int = 100) -> List[str]:
     """
     Splits a long text into smaller chunks with a specified overlap.
     Respects paragraph, sentence, and page boundaries when possible.
@@ -315,7 +315,103 @@ def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 100) -> L
     return chunks
 
 
-def chunk_text_with_pages(pages_data: List[dict], chunk_size: int = 1000, chunk_overlap: int = 100, document_id: str = None) -> List[dict]:
+def chunk_text_by_tokens(text: str, chunk_size: int = 500, chunk_overlap: int = 100) -> List[dict]:
+    """
+    Splits text into chunks based on token count using tiktoken (OpenAI tokenizer).
+    Provides more accurate chunking for embedding models that use token limits.
+    
+    Args:
+        text (str): The input text to be chunked.
+        chunk_size (int): The desired number of tokens per chunk.
+        chunk_overlap (int): The number of tokens to overlap between chunks.
+        
+    Returns:
+        List[dict]: List of chunk data with token-based metadata:
+        [
+            {
+                'text': str,
+                'chunk_id': int,
+                'start_token': int,
+                'end_token': int,
+                'token_count': int,
+                'char_count': int
+            }
+        ]
+    """
+    try:
+        import tiktoken
+    except ImportError:
+        logger.warning("tiktoken not available, falling back to character-based chunking")
+        char_chunks = chunk_text(text, chunk_size * 4, chunk_overlap * 4)  # Rough conversion
+        return [
+            {
+                'text': chunk,
+                'chunk_id': i,
+                'start_token': i * (chunk_size - chunk_overlap),
+                'end_token': i * (chunk_size - chunk_overlap) + len(chunk) // 4,
+                'token_count': len(chunk) // 4,  # Rough estimate
+                'char_count': len(chunk)
+            }
+            for i, chunk in enumerate(char_chunks)
+        ]
+    
+    if not text:
+        return []
+    
+    # Validate overlap
+    if chunk_overlap >= chunk_size:
+        logger.warning(f"Token overlap ({chunk_overlap}) >= chunk_size ({chunk_size}). Setting overlap to {chunk_size // 2}")
+        chunk_overlap = chunk_size // 2
+    
+    # Use OpenAI's tokenizer (most common for embeddings)
+    enc = tiktoken.get_encoding('cl100k_base')
+    tokens = enc.encode(text)
+    total_tokens = len(tokens)
+    
+    chunks = []
+    chunk_id = 0
+    start = 0
+    
+    while start < total_tokens:
+        end = min(start + chunk_size, total_tokens)
+        
+        # If this would be the last chunk and it's exactly the remaining tokens, take them all
+        if end >= total_tokens:
+            chunk_tokens = tokens[start:]
+            if chunk_tokens:
+                chunk_text = enc.decode(chunk_tokens)
+                chunks.append({
+                    'text': chunk_text,
+                    'chunk_id': chunk_id,
+                    'start_token': start,
+                    'end_token': total_tokens,
+                    'token_count': len(chunk_tokens),
+                    'char_count': len(chunk_text)
+                })
+            break
+        
+        chunk_tokens = tokens[start:end]
+        chunk_text = enc.decode(chunk_tokens)
+        
+        chunks.append({
+            'text': chunk_text,
+            'chunk_id': chunk_id,
+            'start_token': start,
+            'end_token': end,
+            'token_count': len(chunk_tokens),
+            'char_count': len(chunk_text)
+        })
+        
+        chunk_id += 1
+        # Calculate next start position
+        step_size = max(1, chunk_size - chunk_overlap)
+        start += step_size
+    
+    logger.info(f"Token-based chunking: {len(chunks)} chunks from {total_tokens} tokens")
+    return chunks
+
+
+def chunk_text_with_pages(pages_data: List[dict], chunk_size: int = 500, chunk_overlap: int = 100, document_id: str = None) -> List[dict]:
     """
     Chunks text while preserving page metadata and handling edge cases.
 
@@ -417,27 +513,120 @@ def chunk_text_with_pages(pages_data: List[dict], chunk_size: int = 1000, chunk_
 # Embedding Generation
 # -----------------------------------------------------------------------------
 
-# Load a pre-trained model once at module import time.
-# all-MiniLM-L6-v2 is a good starting point for speed/quality.
+# Embedding model configuration
+DEFAULT_MODEL_NAME = "all-MiniLM-L6-v2"  # 384 dimensions, fast and efficient
+ALTERNATIVE_MODELS = {
+    "high_quality": "all-mpnet-base-v2",  # 768 dimensions, better quality
+    "multilingual": "paraphrase-multilingual-MiniLM-L12-v2",  # 384 dimensions, multilingual
+    "qa_optimized": "multi-qa-MiniLM-L6-cos-v1"  # 384 dimensions, Q&A optimized
+}
+
+# Global model instance (singleton pattern)
 _model: Optional[SentenceTransformer] = None
+_model_name: str = DEFAULT_MODEL_NAME
 
 
-def _get_model() -> SentenceTransformer:
-    global _model
-    if _model is None:
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _model
+def _get_model(model_name: str = None) -> SentenceTransformer:
+    """
+    Get or initialize the embedding model with comprehensive error handling.
+    
+    Args:
+        model_name (str, optional): Name of the model to load. Defaults to DEFAULT_MODEL_NAME.
+        
+    Returns:
+        SentenceTransformer: The loaded model instance.
+        
+    Raises:
+        Exception: If model loading fails.
+    """
+    global _model, _model_name
+    
+    # Use default model if none specified
+    if model_name is None:
+        model_name = DEFAULT_MODEL_NAME
+    
+    # Return existing model if same model requested
+    if _model is not None and _model_name == model_name:
+        return _model
+    
+    try:
+        logger.info(f"🔄 Loading embedding model: {model_name}")
+        
+        # Load the model with device auto-detection
+        _model = SentenceTransformer(model_name)
+        _model_name = model_name
+        
+        # Log model information
+        device = _model.device
+        max_seq_length = _model.max_seq_length
+        embedding_dim = _model.get_sentence_embedding_dimension()
+        
+        logger.info(f"✅ Model loaded successfully:")
+        logger.info(f"   📋 Model: {model_name}")
+        logger.info(f"   🖥️  Device: {device}")
+        logger.info(f"   📏 Max sequence length: {max_seq_length}")
+        logger.info(f"   📊 Embedding dimensions: {embedding_dim}")
+        
+        return _model
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to load embedding model '{model_name}': {e}")
+        
+        # Try fallback to default model if different model failed
+        if model_name != DEFAULT_MODEL_NAME:
+            logger.info(f"🔄 Attempting fallback to default model: {DEFAULT_MODEL_NAME}")
+            try:
+                _model = SentenceTransformer(DEFAULT_MODEL_NAME)
+                _model_name = DEFAULT_MODEL_NAME
+                logger.info(f"✅ Fallback model loaded: {DEFAULT_MODEL_NAME}")
+                return _model
+            except Exception as fallback_error:
+                logger.error(f"❌ Fallback model also failed: {fallback_error}")
+        
+        raise Exception(f"Could not load any embedding model. Original error: {e}")
+
+
+def get_model_info() -> dict:
+    """
+    Get information about the currently loaded model.
+    
+    Returns:
+        dict: Model information including name, dimensions, device, etc.
+    """
+    try:
+        model = _get_model()
+        return {
+            "model_name": _model_name,
+            "embedding_dimensions": model.get_sentence_embedding_dimension(),
+            "max_sequence_length": model.max_seq_length,
+            "device": str(model.device),
+            "available_models": {
+                "current": DEFAULT_MODEL_NAME,
+                **ALTERNATIVE_MODELS
+            }
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "available_models": {
+                "default": DEFAULT_MODEL_NAME,
+                **ALTERNATIVE_MODELS
+            }
+        }
 
 
 def generate_embeddings(chunks: List[str]) -> List[List[float]]:
     """
-    Generates vector embeddings for a list of text chunks.
+    Generates vector embeddings for a list of text chunks using Sentence-Transformers.
+    
+    Uses all-MiniLM-L6-v2 model (384 dimensions) for fast, high-quality embeddings.
+    Implements batch processing for efficiency and comprehensive error handling.
 
     Args:
-        chunks (List[str]): A list of text chunks.
+        chunks (List[str]): A list of text chunks to embed.
 
     Returns:
-        List[List[float]]: A list of embedding vectors.
+        List[List[float]]: A list of embedding vectors (384 dimensions each).
     """
     if not chunks:
         logger.warning("No chunks provided for embedding generation.")
@@ -445,16 +634,88 @@ def generate_embeddings(chunks: List[str]) -> List[List[float]]:
 
     try:
         model = _get_model()
-        embeddings = model.encode(chunks, show_progress_bar=True)
-        logger.info(f"Successfully generated {len(embeddings)} embeddings.")
-        return embeddings.tolist()
+        
+        # Log embedding generation start
+        logger.info(f"Generating embeddings for {len(chunks)} chunks using {_model_name}")
+        
+        # Generate embeddings with batch processing
+        embeddings = model.encode(
+            chunks, 
+            show_progress_bar=len(chunks) > 10,  # Show progress for larger batches
+            batch_size=32,  # Optimal batch size for most systems
+            normalize_embeddings=True  # L2 normalize for cosine similarity
+        )
+        
+        # Validate embeddings
+        if len(embeddings) != len(chunks):
+            raise ValueError(f"Embedding count mismatch: {len(embeddings)} != {len(chunks)}")
+        
+        # Convert to list format and validate dimensions
+        embeddings_list = embeddings.tolist()
+        expected_dim = 384  # all-MiniLM-L6-v2 dimensions
+        
+        for i, emb in enumerate(embeddings_list):
+            if len(emb) != expected_dim:
+                raise ValueError(f"Unexpected embedding dimension at index {i}: {len(emb)} != {expected_dim}")
+        
+        logger.info(f"✅ Successfully generated {len(embeddings_list)} embeddings ({expected_dim}D)")
+        return embeddings_list
+        
     except Exception as e:
-        logger.error(f"Failed to generate embeddings. Error: {e}")
+        logger.error(f"❌ Failed to generate embeddings: {e}")
         return []
 
 
+def generate_embeddings_with_metadata(chunk_data: List[dict]) -> List[List[float]]:
+    """
+    Generates embeddings for chunks with metadata, handling edge cases.
+    
+    Args:
+        chunk_data (List[dict]): List of chunk dictionaries with 'text' field.
+        
+    Returns:
+        List[List[float]]: List of embedding vectors.
+    """
+    if not chunk_data:
+        logger.warning("No chunk data provided for embedding generation.")
+        return []
+    
+    # Extract text from chunk data and handle empty chunks
+    texts = []
+    valid_indices = []
+    
+    for i, chunk in enumerate(chunk_data):
+        text = chunk.get('text', '').strip()
+        if text:
+            texts.append(text)
+            valid_indices.append(i)
+        else:
+            logger.warning(f"Skipping empty chunk at index {i}")
+    
+    if not texts:
+        logger.error("No valid text found in chunk data")
+        return []
+    
+    # Generate embeddings for valid texts
+    embeddings = generate_embeddings(texts)
+    
+    if not embeddings:
+        return []
+    
+    # Create full embedding list with None for invalid chunks
+    full_embeddings = [None] * len(chunk_data)
+    for i, valid_idx in enumerate(valid_indices):
+        full_embeddings[valid_idx] = embeddings[i]
+    
+    # Filter out None values and return only valid embeddings
+    valid_embeddings = [emb for emb in full_embeddings if emb is not None]
+    
+    logger.info(f"Generated embeddings for {len(valid_embeddings)}/{len(chunk_data)} chunks")
+    return valid_embeddings
+
+
 # -----------------------------------------------------------------------------
-# Vector Database (Qdrant)
+# Vector Database (Qdrant) - Enhanced Step 5 Implementation
 # -----------------------------------------------------------------------------
 
 # Initialize the Qdrant client
@@ -480,6 +741,64 @@ def create_collection_if_not_exists() -> None:
         logger.error(
             f"Could not connect to or create Qdrant collection. Is Qdrant running? Error: {e}"
         )
+
+
+def get_collection_info() -> dict:
+    """
+    Get comprehensive information about the Qdrant collection.
+    
+    Returns:
+        dict: Collection information including stats, configuration, and health.
+    """
+    try:
+        # Get collection info
+        collection_info = _client.get_collection(COLLECTION_NAME)
+        
+        # Get collection stats
+        collection_stats = _client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=1,
+            with_payload=True,
+            with_vectors=False
+        )
+        
+        # Count points by document
+        all_points = _client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=10000,  # Adjust based on expected collection size
+            with_payload=["document_id"],
+            with_vectors=False
+        )
+        
+        document_counts = {}
+        for point in all_points[0]:
+            doc_id = point.payload.get("document_id", "unknown")
+            document_counts[doc_id] = document_counts.get(doc_id, 0) + 1
+        
+        return {
+            "status": "success",
+            "collection_name": COLLECTION_NAME,
+            "vectors_count": collection_info.vectors_count or 0,
+            "vector_size": collection_info.config.params.vectors.size,
+            "distance_metric": collection_info.config.params.vectors.distance.value,
+            "documents_count": len(document_counts),
+            "document_breakdown": document_counts,
+            "indexed": collection_info.status == models.CollectionStatus.GREEN,
+            "config": {
+                "vector_size": VECTOR_SIZE,
+                "distance": "COSINE",
+                "hnsw_config": collection_info.config.hnsw_config,
+                "optimizer_config": collection_info.config.optimizer_config
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get collection info: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "collection_name": COLLECTION_NAME
+        }
 
 
 def store_embeddings(
@@ -513,34 +832,92 @@ def store_embeddings_with_metadata(
     embeddings: List[List[float]],
     chunk_data: List[dict],
     document_id: str,
-) -> None:
+    tags: Optional[List[str]] = None,
+    custom_metadata: Optional[dict] = None
+) -> bool:
     """
-    Stores text chunks with metadata and their embeddings in the Qdrant collection.
-
+    Enhanced Step 5: Store embeddings with comprehensive metadata in Qdrant.
+    
+    Creates payload including:
+    - Document ID
+    - Chunk ID  
+    - Page number(s)
+    - Original chunk text
+    - Tags and custom metadata
+    - Quality indicators
+    - Processing metadata
+    
     Args:
         embeddings (List[List[float]]): The list of embedding vectors.
         chunk_data (List[dict]): List of chunk data with metadata.
         document_id (str): A unique identifier for the source document.
+        tags (List[str], optional): Tags for categorization and filtering.
+        custom_metadata (dict, optional): Additional custom metadata.
+        
+    Returns:
+        bool: True if storage succeeded, False otherwise.
     """
     if not embeddings:
         logger.warning("No embeddings to store.")
-        return
+        return False
+    
+    if len(embeddings) != len(chunk_data):
+        logger.error(f"Embedding count ({len(embeddings)}) doesn't match chunk count ({len(chunk_data)})")
+        return False
 
     try:
         points: List[models.PointStruct] = []
+        import time
+        current_timestamp = int(time.time())
+        
         for i, chunk_info in enumerate(chunk_data):
             point_id = str(uuid.uuid4())
             
+            # Enhanced payload with comprehensive metadata
             payload = {
-                "text": chunk_info['text'],
+                # Core identification
                 "document_id": document_id,
-                "chunk_id": chunk_info['chunk_id'],
-                "char_count": chunk_info['char_count'],
+                "chunk_id": chunk_info.get('chunk_id', i),
+                "point_id": point_id,
+                
+                # Content
+                "text": chunk_info['text'],
+                "char_count": chunk_info.get('char_count', len(chunk_info['text'])),
+                
+                # Page information
                 "source_pages": chunk_info.get('source_pages', []),
+                "page_count": len(chunk_info.get('source_pages', [])),
+                
+                # Quality indicators
                 "has_scanned_content": chunk_info.get('has_scanned_content', False),
                 "has_images": chunk_info.get('has_images', False),
                 "quality_issues": chunk_info.get('quality_issues', []),
+                "quality_score": len(chunk_info.get('quality_issues', [])) == 0,  # True if no issues
+                
+                # Token information (if available)
+                "token_count": chunk_info.get('token_count'),
+                "start_token": chunk_info.get('start_token'),
+                "end_token": chunk_info.get('end_token'),
+                
+                # Processing metadata
+                "created_at": current_timestamp,
+                "embedding_model": _model_name,
+                "embedding_dimensions": len(embeddings[i]),
+                
+                # Tags and custom metadata
+                "tags": tags or [],
+                "custom_metadata": custom_metadata or {},
+                
+                # Search optimization fields
+                "text_length_category": _categorize_text_length(len(chunk_info['text'])),
+                "has_quality_issues": len(chunk_info.get('quality_issues', [])) > 0,
+                "is_scanned_content": chunk_info.get('has_scanned_content', False) or chunk_info.get('likely_scanned', False)
             }
+            
+            # Validate embedding dimensions
+            if len(embeddings[i]) != VECTOR_SIZE:
+                logger.error(f"Embedding dimension mismatch: expected {VECTOR_SIZE}, got {len(embeddings[i])}")
+                continue
             
             points.append(
                 models.PointStruct(
@@ -550,13 +927,294 @@ def store_embeddings_with_metadata(
                 )
             )
 
+        if not points:
+            logger.error("No valid points to store")
+            return False
+
+        # Upsert with wait=True to ensure consistency
         _client.upsert(collection_name=COLLECTION_NAME, points=points, wait=True)
+        
         logger.info(
-            f"Successfully stored {len(points)} points for document {document_id} "
-            f"with page metadata."
+            f"✅ Successfully stored {len(points)} points for document {document_id} "
+            f"with comprehensive metadata (tags: {len(tags or [])}, "
+            f"custom_metadata: {len(custom_metadata or {})} fields)"
         )
+        return True
+        
     except Exception as e:
-        logger.error(f"Failed to store embeddings in Qdrant. Error: {e}")
+        logger.error(f"❌ Failed to store embeddings in Qdrant: {e}")
+        return False
+
+
+def _categorize_text_length(char_count: int) -> str:
+    """Categorize text length for search optimization."""
+    if char_count < 100:
+        return "short"
+    elif char_count < 500:
+        return "medium"
+    elif char_count < 1500:
+        return "long"
+    else:
+        return "very_long"
+
+
+def search_similar_chunks(
+    query_text: str,
+    limit: int = 10,
+    score_threshold: float = 0.7,
+    filter_conditions: Optional[dict] = None,
+    include_metadata: bool = True
+) -> List[dict]:
+    """
+    Search for similar chunks using semantic similarity.
+    
+    Args:
+        query_text (str): The search query text.
+        limit (int): Maximum number of results to return.
+        score_threshold (float): Minimum similarity score (0.0 to 1.0).
+        filter_conditions (dict, optional): Qdrant filter conditions.
+        include_metadata (bool): Whether to include full metadata in results.
+        
+    Returns:
+        List[dict]: List of similar chunks with scores and metadata.
+    """
+    try:
+        # Generate embedding for query
+        query_embeddings = generate_embeddings([query_text])
+        if not query_embeddings:
+            logger.error("Failed to generate query embedding")
+            return []
+        
+        query_vector = query_embeddings[0]
+        
+        # Build filter if provided
+        search_filter = None
+        if filter_conditions:
+            search_filter = models.Filter(**filter_conditions)
+        
+        # Search for similar vectors
+        search_results = _client.search(
+            collection_name=COLLECTION_NAME,
+            query_vector=query_vector,
+            limit=limit,
+            score_threshold=score_threshold,
+            query_filter=search_filter,
+            with_payload=True,
+            with_vectors=False
+        )
+        
+        # Format results
+        results = []
+        for result in search_results:
+            formatted_result = {
+                "id": result.id,
+                "score": float(result.score),
+                "text": result.payload.get("text", ""),
+                "document_id": result.payload.get("document_id"),
+                "chunk_id": result.payload.get("chunk_id"),
+                "source_pages": result.payload.get("source_pages", []),
+            }
+            
+            if include_metadata:
+                formatted_result.update({
+                    "char_count": result.payload.get("char_count"),
+                    "has_scanned_content": result.payload.get("has_scanned_content", False),
+                    "quality_issues": result.payload.get("quality_issues", []),
+                    "tags": result.payload.get("tags", []),
+                    "created_at": result.payload.get("created_at"),
+                    "embedding_model": result.payload.get("embedding_model"),
+                    "custom_metadata": result.payload.get("custom_metadata", {})
+                })
+            
+            results.append(formatted_result)
+        
+        logger.info(f"Found {len(results)} similar chunks for query (threshold: {score_threshold})")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Failed to search similar chunks: {e}")
+        return []
+
+
+def search_by_document(
+    document_id: str,
+    limit: int = 100,
+    include_text: bool = True
+) -> List[dict]:
+    """
+    Retrieve all chunks for a specific document.
+    
+    Args:
+        document_id (str): The document ID to search for.
+        limit (int): Maximum number of chunks to return.
+        include_text (bool): Whether to include chunk text.
+        
+    Returns:
+        List[dict]: List of chunks for the document.
+    """
+    try:
+        # Search with document ID filter
+        filter_condition = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchValue(value=document_id)
+                )
+            ]
+        )
+        
+        search_results = _client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=filter_condition,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False
+        )
+        
+        # Format results
+        results = []
+        for point in search_results[0]:
+            result = {
+                "id": point.id,
+                "chunk_id": point.payload.get("chunk_id"),
+                "source_pages": point.payload.get("source_pages", []),
+                "char_count": point.payload.get("char_count"),
+                "quality_issues": point.payload.get("quality_issues", []),
+                "created_at": point.payload.get("created_at")
+            }
+            
+            if include_text:
+                result["text"] = point.payload.get("text", "")
+            
+            results.append(result)
+        
+        # Sort by chunk_id for consistent ordering
+        results.sort(key=lambda x: x.get("chunk_id", 0))
+        
+        logger.info(f"Retrieved {len(results)} chunks for document {document_id}")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Failed to search by document: {e}")
+        return []
+
+
+def delete_document(document_id: str) -> bool:
+    """
+    Delete all chunks for a specific document.
+    
+    Args:
+        document_id (str): The document ID to delete.
+        
+    Returns:
+        bool: True if deletion succeeded, False otherwise.
+    """
+    try:
+        # Get all points for the document
+        filter_condition = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchValue(value=document_id)
+                )
+            ]
+        )
+        
+        # Get point IDs to delete
+        search_results = _client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=filter_condition,
+            limit=10000,  # Large limit to get all chunks
+            with_payload=False,
+            with_vectors=False
+        )
+        
+        point_ids = [point.id for point in search_results[0]]
+        
+        if not point_ids:
+            logger.warning(f"No points found for document {document_id}")
+            return True
+        
+        # Delete points
+        _client.delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=models.PointIdsList(points=point_ids),
+            wait=True
+        )
+        
+        logger.info(f"✅ Deleted {len(point_ids)} points for document {document_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to delete document {document_id}: {e}")
+        return False
+
+
+def get_collection_stats() -> dict:
+    """
+    Get detailed statistics about the vector database collection.
+    
+    Returns:
+        dict: Comprehensive collection statistics.
+    """
+    try:
+        # Get basic collection info
+        collection_info = _client.get_collection(COLLECTION_NAME)
+        
+        # Get sample of points for analysis
+        sample_points = _client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=1000,
+            with_payload=True,
+            with_vectors=False
+        )
+        
+        # Analyze sample
+        stats = {
+            "collection_name": COLLECTION_NAME,
+            "total_vectors": collection_info.vectors_count or 0,
+            "vector_size": VECTOR_SIZE,
+            "distance_metric": "COSINE",
+            "status": collection_info.status.value if collection_info.status else "unknown"
+        }
+        
+        if sample_points[0]:
+            # Document analysis
+            documents = set()
+            models_used = set()
+            quality_issues_count = 0
+            scanned_content_count = 0
+            total_chars = 0
+            page_counts = []
+            
+            for point in sample_points[0]:
+                payload = point.payload
+                documents.add(payload.get("document_id", "unknown"))
+                models_used.add(payload.get("embedding_model", "unknown"))
+                
+                if payload.get("quality_issues"):
+                    quality_issues_count += 1
+                if payload.get("has_scanned_content"):
+                    scanned_content_count += 1
+                
+                total_chars += payload.get("char_count", 0)
+                page_counts.append(len(payload.get("source_pages", [])))
+            
+            stats.update({
+                "documents_count": len(documents),
+                "embedding_models": list(models_used),
+                "sample_size": len(sample_points[0]),
+                "quality_issues_percentage": round((quality_issues_count / len(sample_points[0])) * 100, 2),
+                "scanned_content_percentage": round((scanned_content_count / len(sample_points[0])) * 100, 2),
+                "avg_chars_per_chunk": round(total_chars / len(sample_points[0])),
+                "avg_pages_per_chunk": round(sum(page_counts) / len(page_counts), 2)
+            })
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Failed to get collection stats: {e}")
+        return {"error": str(e)}
 
 
 # -----------------------------------------------------------------------------
@@ -566,8 +1224,9 @@ def store_embeddings_with_metadata(
 def process_pdf_with_page_structure(
     file_path: str,
     document_id: str,
-    chunk_size: int = 1000,
-    chunk_overlap: int = 100
+    chunk_size: int = 500,
+    chunk_overlap: int = 100,
+    use_token_chunking: bool = False
 ) -> bool:
     """
     Enhanced PDF processing pipeline that preserves page structure and metadata.
@@ -575,8 +1234,9 @@ def process_pdf_with_page_structure(
     Args:
         file_path (str): Path to the PDF file
         document_id (str): Unique identifier for the document
-        chunk_size (int): Size of text chunks
-        chunk_overlap (int): Overlap between chunks
+        chunk_size (int): Size of text chunks (characters or tokens)
+        chunk_overlap (int): Overlap between chunks (characters or tokens)
+        use_token_chunking (bool): If True, use token-based chunking; if False, use character-based
         
     Returns:
         bool: True if processing succeeded, False otherwise
@@ -591,7 +1251,34 @@ def process_pdf_with_page_structure(
             return False
         
         # 2. Chunk text while preserving page metadata
-        chunk_data = chunk_text_with_pages(pages_data, chunk_size, chunk_overlap, document_id)
+        if use_token_chunking:
+            logger.info("Using token-based chunking for enhanced accuracy")
+            # For token-based chunking, we need to process the full text
+            full_text = ""
+            for page_data in pages_data:
+                if not page_data['is_empty'] and not page_data.get('is_corrupted', False):
+                    full_text += page_data['text'] + "\n\n--- Page Break ---\n\n"
+            
+            token_chunks = chunk_text_by_tokens(full_text, chunk_size, chunk_overlap)
+            # Convert token chunks to page-aware format
+            chunk_data = []
+            for token_chunk in token_chunks:
+                chunk_data.append({
+                    'text': token_chunk['text'],
+                    'chunk_id': token_chunk['chunk_id'],
+                    'document_id': document_id,
+                    'source_pages': [],  # Token-based doesn't track specific pages
+                    'char_count': token_chunk['char_count'],
+                    'token_count': token_chunk['token_count'],
+                    'start_token': token_chunk['start_token'],
+                    'end_token': token_chunk['end_token'],
+                    'has_scanned_content': False,
+                    'has_images': False,
+                    'quality_issues': []
+                })
+        else:
+            chunk_data = chunk_text_with_pages(pages_data, chunk_size, chunk_overlap, document_id)
+            
         if not chunk_data:
             logger.error("No chunks created from pages")
             return False
