@@ -9,3 +9,7 @@ tiktoken
 fastapi
 uvicorn
 pydantic
+openai
+requests
+transformers
+torch
