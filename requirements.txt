@@ -6,3 +6,6 @@ qdrant-client
 sentence-transformers
 openai
 tiktoken
+fastapi
+uvicorn
+pydantic
