@@ -1,15 +1,57 @@
-Flask
-loguru
-requests
-pymupdf
-qdrant-client
-sentence-transformers
-openai
-tiktoken
-fastapi
-uvicorn
-pydantic
-openai
-requests
-transformers
-torch
+# Core Web Framework
+Flask>=3.0.0
+loguru>=0.7.0
+requests>=2.31.0
+
+# Document Processing
+pymupdf>=1.23.0
+
+# Vector Database
+qdrant-client>=1.7.0
+
+# Embedding and NLP
+sentence-transformers>=2.2.0
+tiktoken>=0.5.0
+
+# Language Models and AI
+openai>=1.0.0
+transformers>=4.35.0
+torch>=2.0.0
+
+# API Framework (Alternative to Flask)
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.0.0
+
+# =============================================================================
+# Phase 4: Fine-Tuning & Domain Adaptation Dependencies
+# =============================================================================
+
+# Fine-tuning Framework
+peft>=0.7.0
+accelerate>=0.24.0
+bitsandbytes>=0.41.0
+
+# Dataset Management
+datasets>=2.14.0
+scikit-learn>=1.3.0
+
+# Model Evaluation
+evaluate>=0.4.0
+rouge_score>=0.1.2
+nltk>=3.8.0
+absl-py>=1.4.0
+bert_score>=0.3.13
+
+# Model Registry and Experiment Tracking
+mlflow>=2.8.0
+wandb>=0.15.0
+
+# Database and ORM
+sqlalchemy>=2.0.7
+databases>=0.9.0
+
+# Additional Utilities
+numpy>=1.24.0
+pandas>=2.0.0
+matplotlib>=3.7.0
