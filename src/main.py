@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 import time
 
-from .api import chat_router, search_router, health_router
+from .api import chat_router, search_router, health_router, admin_router
 from .pipeline.pipeline import create_collection_if_not_exists
 
 # Create FastAPI app
@@ -96,6 +96,7 @@ async def shutdown_event():
 app.include_router(chat_router)
 app.include_router(search_router)
 app.include_router(health_router)
+app.include_router(admin_router)
 
 
 @app.get("/")
