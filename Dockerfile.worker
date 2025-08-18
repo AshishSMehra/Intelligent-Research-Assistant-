@@ -1,0 +1,89 @@
+# Dockerfile for Intelligent Research Assistant Worker
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV WORKER_ENV=production
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set work directory
+WORKDIR /app
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy project
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p uploads logs qdrant_storage
+
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash worker && \
+    chown -R worker:worker /app
+USER worker
+
+# Create worker script
+RUN echo '#!/bin/bash\n\
+echo "Starting Intelligent Research Assistant Worker..."\n\
+echo "Worker environment: $WORKER_ENV"\n\
+echo "Waiting for services to be ready..."\n\
+sleep 10\n\
+echo "Starting background task processing..."\n\
+python -c "\n\
+import time\n\
+import logging\n\
+from loguru import logger\n\
+from src.pipeline.pipeline import create_collection_if_not_exists\n\
+from src.services.embedding_service import EmbeddingService\n\
+\n\
+# Configure logging\n\
+logger.add(\"logs/worker.log\", rotation=\"10 MB\", retention=\"7 days\")\n\
+\n\
+def main():\n\
+    logger.info(\"Worker starting up...\")\n\
+    \n\
+    # Initialize services\n\
+    try:\n\
+        # Initialize Qdrant collection\n\
+        create_collection_if_not_exists()\n\
+        logger.info(\"Qdrant collection initialized\")\n\
+        \n\
+        # Initialize embedding service\n\
+        embedding_service = EmbeddingService()\n\
+        logger.info(\"Embedding service initialized\")\n\
+        \n\
+        # Main worker loop\n\
+        while True:\n\
+            logger.info(\"Worker heartbeat - processing background tasks...\")\n\
+            \n\
+            # Process any pending tasks here\n\
+            # This is where you would integrate with Celery, RQ, or similar\n\
+            \n\
+            time.sleep(30)  # Check for tasks every 30 seconds\n\
+            \n\
+    except Exception as e:\n\
+        logger.error(f\"Worker error: {e}\")\n\
+        time.sleep(60)  # Wait before retrying\n\
+\n\
+if __name__ == \"__main__\":\n\
+    main()\n\
+"\n\
+' > /app/worker.py && chmod +x /app/worker.py
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD ps aux | grep python | grep worker.py || exit 1
+
+# Run the worker
+CMD ["python", "worker.py"] 
