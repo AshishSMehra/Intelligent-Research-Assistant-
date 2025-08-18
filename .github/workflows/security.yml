@@ -10,6 +10,11 @@ on:
     branches: [ main, develop ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
 jobs:
   # =============================================================================
   # DEPENDENCY VULNERABILITY SCAN
@@ -59,6 +64,9 @@ jobs:
     name: Container Vulnerability Scan
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      security-events: write
     
     steps:
     - name: Checkout code
@@ -80,6 +88,14 @@ jobs:
       if: always()
       with:
         sarif_file: 'trivy-results.sarif'
+        
+    - name: Upload Trivy results as artifact (fallback)
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: trivy-scan-results-${{ github.run_number }}
+        path: trivy-results.sarif
+        retention-days: 30
 
   # =============================================================================
   # SECRET SCAN
