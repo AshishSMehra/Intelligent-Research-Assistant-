@@ -112,6 +112,30 @@ services:
       retries: 3
       start_period: 60s
 
+  # Frontend Service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: intelligent-research-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api:8008
+      - NODE_ENV=production
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - intelligent-research-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   # Nginx Reverse Proxy (Optional)
   nginx:
     image: nginx:alpine
@@ -124,6 +148,7 @@ services:
       - ./ssl:/etc/nginx/ssl:ro
     depends_on:
       - api
+      - frontend
     networks:
       - intelligent-research-network
     restart: unless-stopped

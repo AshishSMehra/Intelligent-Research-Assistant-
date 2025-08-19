@@ -144,6 +144,29 @@ services:
       - intelligent-research-network-dev
     restart: unless-stopped
 
+  # Frontend Development Service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: intelligent-research-frontend-dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8008
+      - NODE_ENV=development
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - intelligent-research-network-dev
+    restart: unless-stopped
+    command: npm run dev
+
 volumes:
   qdrant_data_dev:
     driver: local
