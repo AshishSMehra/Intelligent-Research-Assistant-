@@ -18,7 +18,7 @@ from peft import (
     LoraConfig, get_peft_model, prepare_model_for_kbit_training,
     TaskType, PeftModel
 )
-from datasets import DatasetDict
+from datasets import DatasetDict, Dataset
 import bitsandbytes as bnb
 
 from .gpu_config import GPUConfig

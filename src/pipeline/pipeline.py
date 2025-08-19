@@ -342,7 +342,19 @@ def chunk_text_by_tokens(text: str, chunk_size: int = 500, chunk_overlap: int = 
         import tiktoken
     except ImportError:
         logger.warning("tiktoken not available, falling back to character-based chunking")
-        char_chunks = chunk_text(text, chunk_size * 4, chunk_overlap * 4)  # Rough conversion
+        # Use a simple character-based fallback instead of calling the function
+        char_chunks = []
+        start = 0
+        text_length = len(text)
+        rough_chunk_size = chunk_size * 4
+        rough_overlap = chunk_overlap * 4
+        
+        while start < text_length:
+            end = start + rough_chunk_size
+            chunk = text[start:end].strip()
+            if chunk:
+                char_chunks.append(chunk)
+            start += rough_chunk_size - rough_overlap
         return [
             {
                 'text': chunk,
