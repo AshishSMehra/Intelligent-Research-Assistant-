@@ -807,4 +807,4 @@ def upload():
         return make_response(jsonify({"detail": "An error occurred during processing."}), 500)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8008)
+    app.run(debug=False, port=8008, use_reloader=False)

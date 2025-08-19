@@ -77,3 +77,10 @@ hvac>=1.1.0    # HashiCorp Vault
 
 # Security Headers and Middleware
 cryptography>=41.0.0
+
+
+streamlit>=1.28.0
+requests>=2.31.0
+pandas>=2.0.0
+plotly>=5.15.0
+python-dateutil>=2.8.2 
