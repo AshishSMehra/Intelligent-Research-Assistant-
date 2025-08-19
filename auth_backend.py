@@ -46,6 +46,13 @@ def after_request(response):
     return response
 
 
+print("🚀 Starting Enhanced Backend Server with Authentication...")
+print("📡 API will be available at: http://localhost:8008")
+print("🔐 JWT Authentication enabled")
+print("🌐 CORS configured for http://localhost:3000")
+print("-" * 50)
+
+
 # Add a global OPTIONS handler for all routes
 @app.route("/", defaults={"path": ""}, methods=["OPTIONS"])
 @app.route("/<path:path>", methods=["OPTIONS"])
@@ -57,13 +64,6 @@ def handle_options(path):
     response.headers.add("Access-Control-Allow-Methods", "GET,PUT,POST,DELETE,OPTIONS")
     response.headers.add("Access-Control-Allow-Credentials", "true")
     return response
-
-
-print("🚀 Starting Enhanced Backend Server with Authentication...")
-print("📡 API will be available at: http://localhost:8008")
-print("🔐 JWT Authentication enabled")
-print("🌐 CORS configured for http://localhost:3000")
-print("-" * 50)
 
 
 # Authentication endpoints
