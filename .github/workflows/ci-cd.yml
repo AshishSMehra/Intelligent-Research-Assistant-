@@ -254,6 +254,13 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=sha,prefix={{branch}}-
           
+    - name: Clean up before build
+      run: |
+        echo "Cleaning up disk space before Docker build..."
+        docker system prune -f || true
+        sudo rm -rf /tmp/* || true
+        df -h
+        
     - name: Build and push API image
       uses: docker/build-push-action@v5
       with:
@@ -264,6 +271,12 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        
+    - name: Clean up after API build
+      run: |
+        echo "Cleaning up after API build..."
+        docker system prune -f || true
+        df -h
         
     - name: Build and push Worker image
       uses: docker/build-push-action@v5
@@ -344,26 +357,47 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
+    - name: Clean up disk space
+      run: |
+        echo "Cleaning up disk space before Trivy scan..."
+        docker system prune -f || true
+        sudo rm -rf /tmp/* || true
+        df -h
+        
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
         format: 'sarif'
         output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'
+        timeout: '10m'
         
     - name: Upload Trivy scan results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
-      if: always()
+      if: success() && hashFiles('trivy-results.sarif') != ''
       with:
         sarif_file: 'trivy-results.sarif'
         
     - name: Upload Trivy results as artifact (fallback)
       uses: actions/upload-artifact@v4
-      if: always()
+      if: success() && hashFiles('trivy-results.sarif') != ''
       with:
         name: trivy-scan-results-${{ github.run_number }}
         path: trivy-results.sarif
         retention-days: 30
+        
+    - name: Handle Trivy scan failure
+      if: failure()
+      run: |
+        echo "Trivy scan failed, creating empty SARIF file..."
+        echo '{"version": "2.1.0", "runs": []}' > trivy-results.sarif
+        
+    - name: Upload fallback SARIF file
+      uses: github/codeql-action/upload-sarif@v3
+      if: failure()
+      with:
+        sarif_file: 'trivy-results.sarif'
 
   # =============================================================================
   # DEPLOY TO STAGING

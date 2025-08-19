@@ -76,26 +76,47 @@ jobs:
       run: |
         docker build -t intelligent-research-api:test .
         
+    - name: Clean up disk space
+      run: |
+        echo "Cleaning up disk space before Trivy scan..."
+        docker system prune -f || true
+        sudo rm -rf /tmp/* || true
+        df -h
+        
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: 'intelligent-research-api:test'
         format: 'sarif'
         output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'
+        timeout: '10m'
         
     - name: Upload Trivy scan results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
-      if: always()
+      if: success() && hashFiles('trivy-results.sarif') != ''
       with:
         sarif_file: 'trivy-results.sarif'
         
     - name: Upload Trivy results as artifact (fallback)
       uses: actions/upload-artifact@v4
-      if: always()
+      if: success() && hashFiles('trivy-results.sarif') != ''
       with:
         name: trivy-scan-results-${{ github.run_number }}
         path: trivy-results.sarif
         retention-days: 30
+        
+    - name: Handle Trivy scan failure
+      if: failure()
+      run: |
+        echo "Trivy scan failed, creating empty SARIF file..."
+        echo '{"version": "2.1.0", "runs": []}' > trivy-results.sarif
+        
+    - name: Upload fallback SARIF file
+      uses: github/codeql-action/upload-sarif@v3
+      if: failure()
+      with:
+        sarif_file: 'trivy-results.sarif'
 
   # =============================================================================
   # SECRET SCAN

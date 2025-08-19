@@ -20,6 +20,27 @@ CORS(app,
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      supports_credentials=True)  # Enable credentials for JWT cookies
 
+# Add explicit OPTIONS handling for all routes
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
+
+# Add a global OPTIONS handler for all routes
+@app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
+@app.route('/<path:path>', methods=['OPTIONS'])
+def handle_options(path):
+    """Handle all OPTIONS requests"""
+    response = jsonify({})
+    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:3000')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
+
 print("🚀 Starting Enhanced Backend Server with Authentication...")
 print("📡 API will be available at: http://localhost:8008")
 print("🔐 JWT Authentication enabled")
@@ -27,8 +48,10 @@ print("🌐 CORS configured for http://localhost:3000")
 print("-" * 50)
 
 # Authentication endpoints
-@app.route('/auth/login', methods=['POST'])
+@app.route('/auth/login', methods=['POST', 'OPTIONS'])
 def auth_login():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
     """JWT authentication login endpoint"""
     data = request.get_json()
     username = data.get('username', '')
@@ -79,13 +102,17 @@ def auth_login():
     else:
         return jsonify({"detail": "Invalid username or password"}), 401
 
-@app.route('/auth/logout', methods=['POST'])
+@app.route('/auth/logout', methods=['POST', 'OPTIONS'])
 def auth_logout():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
     """Logout endpoint"""
     return jsonify({"message": "Logged out successfully"})
 
-@app.route('/auth/me', methods=['GET'])
+@app.route('/auth/me', methods=['GET', 'OPTIONS'])
 def auth_me():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
     """Get current user endpoint"""
     # Check for authorization header
     auth_header = request.headers.get('Authorization', '')
@@ -120,8 +147,10 @@ def auth_me():
     
     return jsonify({"detail": "Invalid token"}), 401
 
-@app.route('/auth/refresh', methods=['POST'])
+@app.route('/auth/refresh', methods=['POST', 'OPTIONS'])
 def auth_refresh():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
     """Token refresh endpoint"""
     data = request.get_json()
     refresh_token = data.get('refresh_token', '')
