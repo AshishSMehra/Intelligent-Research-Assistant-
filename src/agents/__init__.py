@@ -8,18 +8,18 @@ This module implements a modular agent system with:
 - Executor Agent: Side effects and external operations
 """
 
-from .base_agent import BaseAgent
-from .planner_agent import PlannerAgent
-from .research_agent import ResearchAgent
-from .reasoner_agent import ReasonerAgent
-from .executor_agent import ExecutorAgent
 from .agent_orchestrator import AgentOrchestrator
+from .base_agent import BaseAgent
+from .executor_agent import ExecutorAgent
+from .planner_agent import PlannerAgent
+from .reasoner_agent import ReasonerAgent
+from .research_agent import ResearchAgent
 
 __all__ = [
     "BaseAgent",
-    "PlannerAgent", 
+    "PlannerAgent",
     "ResearchAgent",
     "ReasonerAgent",
     "ExecutorAgent",
-    "AgentOrchestrator"
-] 
+    "AgentOrchestrator",
+]

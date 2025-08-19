@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+
 from loguru import logger
 
 # Define the base directory of the project
@@ -23,15 +24,16 @@ logger.add(
     level="DEBUG",
     format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
     rotation="10 MB",  # Rotate the log file when it reaches 10 MB
-    retention="7 days", # Keep logs for 7 days
-    compression="zip", # Compress old log files
-    enqueue=True,      # Make logging non-blocking
-    backtrace=True,    # Show full stack trace on exceptions
-    diagnose=True,     # Add exception variable values for debugging
+    retention="7 days",  # Keep logs for 7 days
+    compression="zip",  # Compress old log files
+    enqueue=True,  # Make logging non-blocking
+    backtrace=True,  # Show full stack trace on exceptions
+    diagnose=True,  # Add exception variable values for debugging
 )
 
 # Intercept standard logging messages
 import logging
+
 
 class InterceptHandler(logging.Handler):
     def emit(self, record):
@@ -51,6 +53,7 @@ class InterceptHandler(logging.Handler):
             level,
             record.getMessage(),
         )
+
 
 logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 

@@ -13,15 +13,15 @@ __version__ = "1.0.0"
 __author__ = "Ashish Mehra"
 
 from .dataset_preparation import DatasetPreparation
-from .model_finetuning import ModelFineTuning
 from .evaluation import ModelEvaluation
-from .model_registry import ModelRegistry
 from .gpu_config import GPUConfig
+from .model_finetuning import ModelFineTuning
+from .model_registry import ModelRegistry
 
 __all__ = [
     "DatasetPreparation",
-    "ModelFineTuning", 
+    "ModelFineTuning",
     "ModelEvaluation",
     "ModelRegistry",
-    "GPUConfig"
-] 
+    "GPUConfig",
+]

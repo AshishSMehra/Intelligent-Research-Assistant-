@@ -2,13 +2,14 @@
 Main FastAPI application for the Intelligent Research Assistant.
 """
 
+import time
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
-import time
 
-from .api import chat_router, search_router, health_router, admin_router
+from .api import admin_router, chat_router, health_router, search_router
 from .pipeline.pipeline import create_collection_if_not_exists
 
 # Create FastAPI app
@@ -17,7 +18,7 @@ app = FastAPI(
     description="A production-ready RAG system for intelligent document processing and chat",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
 )
 
 # Add CORS middleware
@@ -44,14 +45,14 @@ async def add_process_time_header(request: Request, call_next):
 async def log_requests(request: Request, call_next):
     """Log all incoming requests."""
     start_time = time.time()
-    
+
     logger.info(f"Request: {request.method} {request.url}")
-    
+
     response = await call_next(request)
-    
+
     process_time = time.time() - start_time
     logger.info(f"Response: {response.status_code} - {process_time:.3f}s")
-    
+
     return response
 
 
@@ -64,8 +65,8 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={
             "error": "Internal server error",
             "detail": str(exc),
-            "path": str(request.url)
-        }
+            "path": str(request.url),
+        },
     )
 
 
@@ -73,14 +74,14 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def startup_event():
     """Initialize application on startup."""
     logger.info("Starting Intelligent Research Assistant...")
-    
+
     try:
         # Initialize vector database collection
         create_collection_if_not_exists()
         logger.info("Vector database collection initialized")
-        
+
         logger.info("Application startup completed successfully")
-        
+
     except Exception as e:
         logger.error(f"Startup failed: {e}")
         raise
@@ -106,17 +107,13 @@ async def root():
         "message": "Intelligent Research Assistant API",
         "version": "1.0.0",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
     }
 
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
-        "src.main:app",
-        host="127.0.0.1",
-        port=8008,
-        reload=True,
-        log_level="info"
-    ) 
+        "src.main:app", host="127.0.0.1", port=8008, reload=True, log_level="info"
+    )

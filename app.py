@@ -1,29 +1,31 @@
 import os
 import uuid
-import requests
-from flask import Flask, request, jsonify, make_response
-from flasgger import Swagger
-from logging_config import logger
 
-# Import pipeline modules
-from src.pipeline.pipeline import (
-    extract_text_from_pdf,
-    chunk_text,
-    generate_embeddings,
-    generate_embeddings_with_metadata,
-    store_embeddings,
-    create_collection_if_not_exists,
-    process_pdf_with_page_structure,
-    get_model_info,
-    get_collection_info,
-    get_collection_stats,
-    search_similar_chunks,
-    search_by_document,
-    delete_document,
-)
+import requests
+from flasgger import Swagger
+from flask import Flask, jsonify, make_response, request
+
+from logging_config import logger
 
 # Import multi-agent system
 from src.agents.agent_orchestrator import AgentOrchestrator
+
+# Import pipeline modules
+from src.pipeline.pipeline import (
+    chunk_text,
+    create_collection_if_not_exists,
+    delete_document,
+    extract_text_from_pdf,
+    generate_embeddings,
+    generate_embeddings_with_metadata,
+    get_collection_info,
+    get_collection_stats,
+    get_model_info,
+    process_pdf_with_page_structure,
+    search_by_document,
+    search_similar_chunks,
+    store_embeddings,
+)
 
 # -----------------------------------------------------------------------------
 # Settings
@@ -45,6 +47,7 @@ create_collection_if_not_exists()
 logger.info("Initializing multi-agent orchestrator...")
 agent_orchestrator = AgentOrchestrator()
 
+
 @app.route("/")
 def read_root():
     """
@@ -55,7 +58,12 @@ def read_root():
       200:
         description: A welcome message.
     """
-    return jsonify({"message": "Welcome to the File Upload API. Use the /upload endpoint to upload files."})
+    return jsonify(
+        {
+            "message": "Welcome to the File Upload API. Use the /upload endpoint to upload files."
+        }
+    )
+
 
 @app.route("/health")
 def health():
@@ -82,15 +90,9 @@ def model_info():
     """
     try:
         info = get_model_info()
-        return jsonify({
-            "status": "success",
-            "model_info": info
-        })
+        return jsonify({"status": "success", "model_info": info})
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/collection-info")
@@ -107,10 +109,7 @@ def collection_info():
         info = get_collection_info()
         return jsonify(info)
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/collection-stats")
@@ -125,15 +124,9 @@ def collection_stats():
     """
     try:
         stats = get_collection_stats()
-        return jsonify({
-            "status": "success",
-            "stats": stats
-        })
+        return jsonify({"status": "success", "stats": stats})
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/search", methods=["POST"])
@@ -174,36 +167,32 @@ def search():
     try:
         data = request.get_json()
         if not data or not data.get("query"):
-            return jsonify({
-                "status": "error",
-                "error": "Query text is required"
-            }), 400
-        
+            return jsonify({"status": "error", "error": "Query text is required"}), 400
+
         query_text = data["query"]
         limit = data.get("limit", 10)
         score_threshold = data.get("score_threshold", 0.7)
         include_metadata = data.get("include_metadata", True)
-        
+
         results = search_similar_chunks(
             query_text=query_text,
             limit=limit,
             score_threshold=score_threshold,
-            include_metadata=include_metadata
+            include_metadata=include_metadata,
         )
-        
-        return jsonify({
-            "status": "success",
-            "query": query_text,
-            "results_count": len(results),
-            "results": results
-        })
-        
+
+        return jsonify(
+            {
+                "status": "success",
+                "query": query_text,
+                "results_count": len(results),
+                "results": results,
+            }
+        )
+
     except Exception as e:
         logger.error(f"Search endpoint error: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/documents/<document_id>")
@@ -232,31 +221,29 @@ def get_document(document_id):
     """
     try:
         include_text = request.args.get("include_text", "true").lower() == "true"
-        
-        results = search_by_document(
-            document_id=document_id,
-            include_text=include_text
-        )
-        
+
+        results = search_by_document(document_id=document_id, include_text=include_text)
+
         if not results:
-            return jsonify({
-                "status": "error",
-                "error": f"Document {document_id} not found"
-            }), 404
-        
-        return jsonify({
-            "status": "success",
-            "document_id": document_id,
-            "chunks_count": len(results),
-            "chunks": results
-        })
-        
+            return (
+                jsonify(
+                    {"status": "error", "error": f"Document {document_id} not found"}
+                ),
+                404,
+            )
+
+        return jsonify(
+            {
+                "status": "success",
+                "document_id": document_id,
+                "chunks_count": len(results),
+                "chunks": results,
+            }
+        )
+
     except Exception as e:
         logger.error(f"Get document endpoint error: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/documents/<document_id>", methods=["DELETE"])
@@ -281,29 +268,34 @@ def delete_document_endpoint(document_id):
     """
     try:
         success = delete_document(document_id)
-        
+
         if success:
-            return jsonify({
-                "status": "success",
-                "message": f"Document {document_id} deleted successfully"
-            })
+            return jsonify(
+                {
+                    "status": "success",
+                    "message": f"Document {document_id} deleted successfully",
+                }
+            )
         else:
-            return jsonify({
-                "status": "error",
-                "error": f"Failed to delete document {document_id}"
-            }), 500
-        
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "error": f"Failed to delete document {document_id}",
+                    }
+                ),
+                500,
+            )
+
     except Exception as e:
         logger.error(f"Delete document endpoint error: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 # =============================================================================
 # Multi-Agent System Endpoints
 # =============================================================================
+
 
 @app.route("/agents", methods=["GET"])
 def get_agents_status():
@@ -319,16 +311,10 @@ def get_agents_status():
     """
     try:
         metrics = agent_orchestrator.get_agent_metrics()
-        return jsonify({
-            "status": "success",
-            "agents": metrics
-        })
+        return jsonify({"status": "success", "agents": metrics})
     except Exception as e:
         logger.error(f"Error getting agents status: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/agents/<agent_type>", methods=["GET"])
@@ -353,25 +339,22 @@ def get_agent_details(agent_type):
     """
     try:
         if agent_type not in agent_orchestrator.agents:
-            return jsonify({
-                "status": "error",
-                "error": f"Agent type '{agent_type}' not found"
-            }), 404
-        
+            return (
+                jsonify(
+                    {"status": "error", "error": f"Agent type '{agent_type}' not found"}
+                ),
+                404,
+            )
+
         agent = agent_orchestrator.agents[agent_type]
         details = agent.get_metrics()
-        
-        return jsonify({
-            "status": "success",
-            "agent_type": agent_type,
-            "details": details
-        })
+
+        return jsonify(
+            {"status": "success", "agent_type": agent_type, "details": details}
+        )
     except Exception as e:
         logger.error(f"Error getting agent details: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/agents/<agent_type>/activate", methods=["POST"])
@@ -394,16 +377,15 @@ def activate_agent(agent_type):
     """
     try:
         agent_orchestrator.activate_agent(agent_type)
-        return jsonify({
-            "status": "success",
-            "message": f"Agent {agent_type} activated successfully"
-        })
+        return jsonify(
+            {
+                "status": "success",
+                "message": f"Agent {agent_type} activated successfully",
+            }
+        )
     except Exception as e:
         logger.error(f"Error activating agent: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/agents/<agent_type>/deactivate", methods=["POST"])
@@ -426,16 +408,15 @@ def deactivate_agent(agent_type):
     """
     try:
         agent_orchestrator.deactivate_agent(agent_type)
-        return jsonify({
-            "status": "success",
-            "message": f"Agent {agent_type} deactivated successfully"
-        })
+        return jsonify(
+            {
+                "status": "success",
+                "message": f"Agent {agent_type} deactivated successfully",
+            }
+        )
     except Exception as e:
         logger.error(f"Error deactivating agent: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/agents/reset", methods=["POST"])
@@ -452,16 +433,12 @@ def reset_all_agents():
     """
     try:
         agent_orchestrator.reset_agents()
-        return jsonify({
-            "status": "success",
-            "message": "All agents reset successfully"
-        })
+        return jsonify(
+            {"status": "success", "message": "All agents reset successfully"}
+        )
     except Exception as e:
         logger.error(f"Error resetting agents: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/workflows", methods=["GET"])
@@ -484,18 +461,13 @@ def get_workflow_history():
     try:
         limit = request.args.get("limit", 10, type=int)
         history = agent_orchestrator.get_workflow_history(limit)
-        
-        return jsonify({
-            "status": "success",
-            "workflows": history,
-            "total_workflows": len(history)
-        })
+
+        return jsonify(
+            {"status": "success", "workflows": history, "total_workflows": len(history)}
+        )
     except Exception as e:
         logger.error(f"Error getting workflow history: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/workflows/<workflow_id>", methods=["GET"])
@@ -520,23 +492,19 @@ def get_workflow_details(workflow_id):
     """
     try:
         workflow = agent_orchestrator.get_workflow(workflow_id)
-        
+
         if not workflow:
-            return jsonify({
-                "status": "error",
-                "error": f"Workflow '{workflow_id}' not found"
-            }), 404
-        
-        return jsonify({
-            "status": "success",
-            "workflow": workflow
-        })
+            return (
+                jsonify(
+                    {"status": "error", "error": f"Workflow '{workflow_id}' not found"}
+                ),
+                404,
+            )
+
+        return jsonify({"status": "success", "workflow": workflow})
     except Exception as e:
         logger.error(f"Error getting workflow details: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/capabilities", methods=["GET"])
@@ -553,17 +521,11 @@ def get_agent_capabilities():
     """
     try:
         capabilities = agent_orchestrator.get_agent_capabilities()
-        
-        return jsonify({
-            "status": "success",
-            "capabilities": capabilities
-        })
+
+        return jsonify({"status": "success", "capabilities": capabilities})
     except Exception as e:
         logger.error(f"Error getting agent capabilities: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/chat", methods=["POST"])
@@ -598,31 +560,23 @@ def chat_endpoint():
     try:
         data = request.get_json()
         if not data or not data.get("query"):
-            return jsonify({
-                "status": "error",
-                "error": "Query is required"
-            }), 400
-        
+            return jsonify({"status": "error", "error": "Query is required"}), 400
+
         query = data["query"]
         context = data.get("context", {})
-        
+
         logger.info(f"Processing chat query: {query[:50]}...")
-        
+
         # Execute workflow using multi-agent system (synchronous wrapper)
         import asyncio
+
         result = asyncio.run(agent_orchestrator.execute_workflow(query, context))
-        
-        return jsonify({
-            "status": "success",
-            "result": result
-        })
-        
+
+        return jsonify({"status": "success", "result": result})
+
     except Exception as e:
         logger.error(f"Error processing chat query: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/test/workflow", methods=["POST"])
@@ -648,28 +602,23 @@ def test_workflow():
     try:
         query = request.args.get("query")
         if not query:
-            return jsonify({
-                "status": "error",
-                "error": "Query parameter is required"
-            }), 400
-        
+            return (
+                jsonify({"status": "error", "error": "Query parameter is required"}),
+                400,
+            )
+
         logger.info(f"Testing workflow with query: {query}")
-        
+
         # Execute workflow using multi-agent system (synchronous wrapper)
         import asyncio
+
         result = asyncio.run(agent_orchestrator.execute_workflow(query))
-        
-        return jsonify({
-            "status": "success",
-            "test_result": result
-        })
-        
+
+        return jsonify({"status": "success", "test_result": result})
+
     except Exception as e:
         logger.error(f"Error testing workflow: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/admin/health", methods=["GET"])
@@ -687,30 +636,27 @@ def admin_health_check():
     try:
         available_agents = agent_orchestrator.get_available_agents()
         agent_metrics = agent_orchestrator.get_agent_metrics()
-        
+
         health_status = {
             "status": "healthy",
             "available_agents": available_agents,
             "total_agents": len(available_agents),
             "active_agents": agent_metrics.get("active_agents", 0),
-            "total_workflows": agent_metrics.get("total_workflows", 0)
+            "total_workflows": agent_metrics.get("total_workflows", 0),
         }
-        
+
         return jsonify(health_status)
-        
+
     except Exception as e:
         logger.error(f"Admin health check failed: {e}")
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 
-@app.route('/upload', methods=['POST'])
+@app.route("/upload", methods=["POST"])
 def upload():
     """
     Upload a File or a URL to start the ingestion pipeline.
-    ---    
+    ---
     consumes:
       - multipart/form-data
       - application/json
@@ -741,10 +687,12 @@ def upload():
     file_path = None
     filename = None
 
-    if 'multipart/form-data' in request.content_type:
-        file = request.files.get('file')
+    if "multipart/form-data" in request.content_type:
+        file = request.files.get("file")
         if not file:
-            return make_response(jsonify({"detail": "No file part in multipart/form-data request."}), 400)
+            return make_response(
+                jsonify({"detail": "No file part in multipart/form-data request."}), 400
+            )
         filename = file.filename
         file_path = os.path.join(UPLOADS_DIR, filename)
         file.save(file_path)
@@ -752,9 +700,11 @@ def upload():
     elif request.is_json:
         data = request.get_json()
         if data:
-            url = data.get('url')
+            url = data.get("url")
         if not url:
-             return make_response(jsonify({"detail": "No URL provided in JSON body."}), 400)
+            return make_response(
+                jsonify({"detail": "No URL provided in JSON body."}), 400
+            )
         try:
             response = requests.get(url, stream=True)
             response.raise_for_status()
@@ -765,10 +715,19 @@ def upload():
                     f.write(chunk)
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download file from URL {url}. Error: {e}")
-            return make_response(jsonify({"detail": f"Failed to download file from URL. {e}"}), 500)
+            return make_response(
+                jsonify({"detail": f"Failed to download file from URL. {e}"}), 500
+            )
 
     if not file_path:
-        return make_response(jsonify({"detail": "Please provide a file (multipart/form-data) or a URL (application/json)."}), 400)
+        return make_response(
+            jsonify(
+                {
+                    "detail": "Please provide a file (multipart/form-data) or a URL (application/json)."
+                }
+            ),
+            400,
+        )
 
     # --- Start Enhanced Ingestion Pipeline ---
     try:
@@ -777,15 +736,19 @@ def upload():
 
         # Use enhanced processing with page structure preservation
         success = process_pdf_with_page_structure(file_path, document_id)
-        
+
         if not success:
-            logger.warning(f"Enhanced processing failed for {filename}, falling back to basic processing...")
-            
+            logger.warning(
+                f"Enhanced processing failed for {filename}, falling back to basic processing..."
+            )
+
             # Fallback to basic processing
             # 1. Extract Text
             text = extract_text_from_pdf(file_path)
             if not text:
-                return make_response(jsonify({"detail": f"Could not extract text from {filename}."}), 500)
+                return make_response(
+                    jsonify({"detail": f"Could not extract text from {filename}."}), 500
+                )
 
             # 2. Chunk Text
             chunks = chunk_text(text)
@@ -797,14 +760,21 @@ def upload():
             store_embeddings(embeddings, chunks, document_id)
 
         logger.info(f"Successfully completed ingestion for document_id: {document_id}")
-        return jsonify({
-            "message": f"File '{filename}' processed successfully with page structure preservation.",
-            "document_id": document_id
-        })
+        return jsonify(
+            {
+                "message": f"File '{filename}' processed successfully with page structure preservation.",
+                "document_id": document_id,
+            }
+        )
 
     except Exception as e:
-        logger.error(f"An error occurred during the ingestion pipeline for {filename}. Error: {e}")
-        return make_response(jsonify({"detail": "An error occurred during processing."}), 500)
+        logger.error(
+            f"An error occurred during the ingestion pipeline for {filename}. Error: {e}"
+        )
+        return make_response(
+            jsonify({"detail": "An error occurred during processing."}), 500
+        )
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     app.run(debug=False, port=8008, use_reloader=False)

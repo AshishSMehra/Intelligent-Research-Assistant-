@@ -2,8 +2,9 @@
 Search API endpoints for the Intelligent Research Assistant.
 """
 
+from typing import Any, Dict, List
+
 from fastapi import APIRouter, HTTPException, Query
-from typing import List, Dict, Any
 from loguru import logger
 
 from ..models.search import SearchQuery, SearchResult
@@ -20,65 +21,60 @@ search_service = SearchService()
 async def search_endpoint(search_query: SearchQuery):
     """
     Semantic search endpoint.
-    
+
     Args:
         search_query: Search query with parameters
-        
+
     Returns:
         List of search results
     """
     try:
         logger.info(f"Received search query: {search_query.query[:50]}...")
-        
+
         results = await search_service.semantic_search(
             query=search_query.query,
             limit=search_query.limit,
-            score_threshold=search_query.score_threshold
+            score_threshold=search_query.score_threshold,
         )
-        
+
         logger.info(f"Found {len(results)} search results")
         return results
-        
+
     except Exception as e:
         logger.error(f"Error in search: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Search failed: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
 @search_router.get("/documents/{document_id}")
 async def get_document_chunks(
     document_id: str,
-    include_text: bool = Query(True, description="Include text in results")
+    include_text: bool = Query(True, description="Include text in results"),
 ):
     """
     Get all chunks for a specific document.
-    
+
     Args:
         document_id: Document ID
         include_text: Whether to include text
-        
+
     Returns:
         Document chunks
     """
     try:
         results = await search_service.search_by_document(
-            document_id=document_id,
-            include_text=include_text
+            document_id=document_id, include_text=include_text
         )
-        
+
         return {
             "document_id": document_id,
             "chunks_count": len(results),
-            "chunks": results
+            "chunks": results,
         }
-        
+
     except Exception as e:
         logger.error(f"Error getting document chunks: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get document chunks: {str(e)}"
+            status_code=500, detail=f"Failed to get document chunks: {str(e)}"
         )
 
 
@@ -86,17 +82,16 @@ async def get_document_chunks(
 async def get_search_stats():
     """
     Get search statistics.
-    
+
     Returns:
         Search statistics
     """
     try:
         stats = await search_service.get_collection_stats()
         return stats
-        
+
     except Exception as e:
         logger.error(f"Error getting search stats: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get search stats: {str(e)}"
-        ) 
+            status_code=500, detail=f"Failed to get search stats: {str(e)}"
+        )
