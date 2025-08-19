@@ -2,11 +2,27 @@
 Research Agent for information retrieval and API calls.
 """
 
-import asyncio
+import hashlib
+import json
+import os
+import random
+import re
 import time
-from typing import Any, Dict, List
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 from ..services.search_service import SearchService
 from .base_agent import AgentResult, AgentTask, BaseAgent
@@ -45,7 +61,7 @@ class ResearchAgent(BaseAgent):
         }
 
         logger.info(
-            f"Research Agent {agent_id} initialized with {len(self.research_methods)} research methods"
+            "Research Agent {agent_id} initialized with {len(self.research_methods)} research methods"
         )
 
     async def execute_task(self, task: AgentTask) -> AgentResult:
@@ -73,7 +89,7 @@ class ResearchAgent(BaseAgent):
             elif task.task_type == "document_retrieval":
                 result_data = await self._retrieve_documents(task)
             else:
-                raise ValueError(f"Unknown task type: {task.task_type}")
+                raise ValueError("Unknown task type: {task.task_type}")
 
             execution_time = time.time() - start_time
             result = AgentResult(
@@ -96,7 +112,7 @@ class ResearchAgent(BaseAgent):
                 execution_time=execution_time,
                 metadata={"task_type": task.task_type},
             )
-            logger.error(f"Research Agent error: {e}")
+            logger.error("Research Agent error: {e}")
 
         self._log_task_complete(task, result)
         self._update_metrics(result)
@@ -114,9 +130,7 @@ class ResearchAgent(BaseAgent):
         Returns:
             Dict containing research results
         """
-        query = task.parameters.get("query", "")
         search_type = task.parameters.get("search_type", "vector_search")
-        max_results = task.parameters.get("max_results", 5)
 
         research_results = {
             "query": query,
@@ -155,7 +169,6 @@ class ResearchAgent(BaseAgent):
         Returns:
             Dict containing search results
         """
-        query = task.parameters.get("query", "")
         limit = task.parameters.get("max_results", 5)
         score_threshold = task.parameters.get("score_threshold", 0.7)
 
@@ -205,7 +218,7 @@ class ResearchAgent(BaseAgent):
             }
 
         except Exception as e:
-            logger.error(f"Vector search error: {e}")
+            logger.error("Vector search error: {e}")
             return {"results": [], "sources": [], "metadata": {"error": str(e)}}
 
     async def _perform_web_search(self, task: AgentTask) -> Dict[str, Any]:
@@ -218,7 +231,6 @@ class ResearchAgent(BaseAgent):
         Returns:
             Dict containing web search results
         """
-        query = task.parameters.get("query", "")
 
         # Placeholder web search implementation
         # In production, this would integrate with search APIs like Google, Bing, etc.
@@ -226,7 +238,7 @@ class ResearchAgent(BaseAgent):
         return {
             "results": [
                 {
-                    "content": f"Web search result for: {query}",
+                    "content": "Web search result for: {query}",
                     "score": 0.8,
                     "source": "web_search",
                     "url": "https://example.com/search-result",
@@ -250,7 +262,6 @@ class ResearchAgent(BaseAgent):
         Returns:
             Dict containing API search results
         """
-        query = task.parameters.get("query", "")
         api_type = task.parameters.get("api_type", "general")
 
         # Placeholder API search implementation
@@ -259,9 +270,9 @@ class ResearchAgent(BaseAgent):
         return {
             "results": [
                 {
-                    "content": f"API search result for: {query}",
+                    "content": "API search result for: {query}",
                     "score": 0.9,
-                    "source": f"{api_type}_api",
+                    "source": "{api_type}_api",
                     "api_response": {"status": "success"},
                 }
             ],
@@ -320,7 +331,7 @@ class ResearchAgent(BaseAgent):
                 )
 
             except Exception as e:
-                logger.error(f"Document retrieval error for {doc_id}: {e}")
+                logger.error("Document retrieval error for {doc_id}: {e}")
 
         return {
             "results": results,

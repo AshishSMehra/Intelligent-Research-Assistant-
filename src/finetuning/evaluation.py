@@ -2,16 +2,26 @@
 Model Evaluation for Fine-tuned Models.
 """
 
+import hashlib
 import json
 import os
+import random
+import re
 import time
+import uuid
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import evaluate
 import numpy as np
+import pandas as pd
+import requests
 import torch
+from botocore.exceptions import NoCredentialsError
 from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
@@ -54,7 +64,7 @@ class ModelEvaluation:
         self.rouge_metric = evaluate.load("rouge")
         self.bert_score_metric = evaluate.load("bertscore")
 
-        logger.info(f"Model evaluation initialized with device: {self.device}")
+        logger.info("Model evaluation initialized with device: {self.device}")
 
     def load_model(self, model_path: str) -> None:
         """
@@ -63,7 +73,7 @@ class ModelEvaluation:
         Args:
             model_path: Path to the fine-tuned model
         """
-        logger.info(f"Loading model from: {model_path}")
+        logger.info("Loading model from: {model_path}")
 
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -82,7 +92,7 @@ class ModelEvaluation:
             self.model = self.model.to(self.device)
 
         self.model.eval()
-        logger.info(f"Model loaded successfully on {self.model.device}")
+        logger.info("Model loaded successfully on {self.model.device}")
 
     def evaluate_perplexity(self, test_dataset: Dataset) -> float:
         """
@@ -119,7 +129,7 @@ class ModelEvaluation:
         avg_loss = total_loss / total_tokens
         perplexity = torch.exp(torch.tensor(avg_loss)).item()
 
-        logger.info(f"Perplexity: {perplexity:.4f}")
+        logger.info("Perplexity: {perplexity:.4f}")
         return perplexity
 
     def generate_responses(
@@ -145,7 +155,7 @@ class ModelEvaluation:
             instruction = example.get("instruction", "")
             input_text = example.get("input", "")
 
-            prompt = f"### Instruction:\n{instruction}\n\n### Input:\n{input_text}\n\n### Response:\n"
+            prompt = "### Instruction:\n{instruction}\n\n### Input:\n{input_text}\n\n### Response:\n"
 
             # Tokenize
             inputs = self.tokenizer(
@@ -169,7 +179,7 @@ class ModelEvaluation:
 
             generated_responses.append(response.strip())
 
-        logger.info(f"Generated {len(generated_responses)} responses")
+        logger.info("Generated {len(generated_responses)} responses")
         return generated_responses
 
     def calculate_text_metrics(
@@ -196,7 +206,7 @@ class ModelEvaluation:
             )["bleu"]
             metrics["bleu_score"] = bleu_score
         except Exception as e:
-            logger.warning(f"Could not calculate BLEU score: {e}")
+            logger.warning("Could not calculate BLEU score: {e}")
             metrics["bleu_score"] = 0.0
 
         # ROUGE Score
@@ -206,7 +216,7 @@ class ModelEvaluation:
             )
             metrics["rouge_score"] = rouge_scores["rouge1"]
         except Exception as e:
-            logger.warning(f"Could not calculate ROUGE score: {e}")
+            logger.warning("Could not calculate ROUGE score: {e}")
             metrics["rouge_score"] = 0.0
 
         # BERT Score
@@ -216,7 +226,7 @@ class ModelEvaluation:
             )
             metrics["bert_score"] = np.mean(bert_scores["f1"])
         except Exception as e:
-            logger.warning(f"Could not calculate BERT score: {e}")
+            logger.warning("Could not calculate BERT score: {e}")
             metrics["bert_score"] = 0.0
 
         return metrics
@@ -275,7 +285,7 @@ class ModelEvaluation:
             evaluation_time=evaluation_time,
         )
 
-        logger.info(f"Evaluation completed in {evaluation_time:.2f}s")
+        logger.info("Evaluation completed in {evaluation_time:.2f}s")
         return metrics
 
     def save_evaluation_results(
@@ -316,7 +326,7 @@ class ModelEvaluation:
         with open(output_path, "w") as f:
             json.dump(results, f, indent=2)
 
-        logger.info(f"Evaluation results saved to {output_path}")
+        logger.info("Evaluation results saved to {output_path}")
 
     def compare_models(
         self, model_paths: List[str], test_dataset: Dataset
@@ -331,12 +341,12 @@ class ModelEvaluation:
         Returns:
             Dictionary of evaluation metrics for each model
         """
-        logger.info(f"Comparing {len(model_paths)} models")
+        logger.info("Comparing {len(model_paths)} models")
 
         results = {}
 
         for model_path in model_paths:
-            logger.info(f"Evaluating model: {model_path}")
+            logger.info("Evaluating model: {model_path}")
 
             # Load model
             self.load_model(model_path)
@@ -378,7 +388,7 @@ class ModelEvaluation:
         Returns:
             Formatted report string
         """
-        report = f"""
+        report = """
 # Model Evaluation Report
 
 ## Model Information
@@ -457,5 +467,5 @@ class ModelEvaluation:
             )
 
         except Exception as e:
-            logger.error(f"Error in hallucination detection: {e}")
+            logger.error("Error in hallucination detection: {e}")
             return 0.0

@@ -5,16 +5,27 @@ This module implements comprehensive evaluation for RLHF models.
 It compares baseline supervised models vs RLHF models on various metrics.
 """
 
+import hashlib
 import json
 import os
+import random
+import re
 import time
+import uuid
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
+import pandas as pd
+import requests
 import torch
-from datasets import Dataset
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Import evaluation metrics
@@ -80,7 +91,7 @@ class RLHFEvaluator:
             model.to(self.device)
             return model
         except Exception as e:
-            logger.error(f"Failed to load model from {model_path}: {e}")
+            logger.error("Failed to load model from {model_path}: {e}")
             return None
 
     def _init_metrics(self):
@@ -93,7 +104,7 @@ class RLHFEvaluator:
                 self.metrics["rouge"] = evaluate.load("rouge")
                 self.metrics["bertscore"] = evaluate.load("bertscore")
             except Exception as e:
-                logger.warning(f"Failed to load some metrics: {e}")
+                logger.warning("Failed to load some metrics: {e}")
 
     def generate_response(
         self, model, tokenizer, prompt: str, max_length: int = 100
@@ -247,7 +258,7 @@ class RLHFEvaluator:
                     )
                     metrics["bleu_score"] = bleu_score["bleu"]
                 except Exception as e:
-                    logger.warning(f"BLEU calculation failed: {e}")
+                    logger.warning("BLEU calculation failed: {e}")
                     metrics["bleu_score"] = 0.0
 
             # ROUGE Score
@@ -258,7 +269,7 @@ class RLHFEvaluator:
                     )
                     metrics["rouge_score"] = rouge_score["rouge1"].mid.fmeasure
                 except Exception as e:
-                    logger.warning(f"ROUGE calculation failed: {e}")
+                    logger.warning("ROUGE calculation failed: {e}")
                     metrics["rouge_score"] = 0.0
 
             # BERT Score
@@ -269,7 +280,7 @@ class RLHFEvaluator:
                     )
                     metrics["bert_score"] = bert_score["f1"][0]
                 except Exception as e:
-                    logger.warning(f"BERT Score calculation failed: {e}")
+                    logger.warning("BERT Score calculation failed: {e}")
                     metrics["bert_score"] = 0.0
 
         return metrics
@@ -278,7 +289,7 @@ class RLHFEvaluator:
         """Run comprehensive evaluation comparing baseline vs RLHF models."""
         logger.info("Starting comprehensive RLHF evaluation...")
 
-        results = {"baseline": {}, "rlhf": {}, "comparison": {}}
+        results = {"baseline": {}, "rlh": {}, "comparison": {}}
 
         # Generate responses for both models
         baseline_responses = []
@@ -309,13 +320,13 @@ class RLHFEvaluator:
         )
 
         # Evaluate RLHF model
-        results["rlhf"] = self._evaluate_model_responses(
-            self.config.test_prompts, rlhf_responses, "rlhf"
+        results["rlh"] = self._evaluate_model_responses(
+            self.config.test_prompts, rlhf_responses, "rlh"
         )
 
         # Compare models
         results["comparison"] = self._compare_models(
-            results["baseline"], results["rlhf"]
+            results["baseline"], results["rlh"]
         )
 
         # Save results
@@ -327,7 +338,7 @@ class RLHFEvaluator:
         self, prompts: List[str], responses: List[str], model_name: str
     ) -> Dict[str, Any]:
         """Evaluate responses from a specific model."""
-        logger.info(f"Evaluating {model_name} model...")
+        logger.info("Evaluating {model_name} model...")
 
         # Calculate metrics for each prompt
         factuality_scores = []
@@ -408,7 +419,7 @@ class RLHFEvaluator:
 
             comparison[metric] = {
                 "baseline": baseline_mean,
-                "rlhf": rlhf_mean,
+                "rlh": rlhf_mean,
                 "improvement": improvement,
                 "improvement_percent": improvement_percent,
             }
@@ -420,7 +431,7 @@ class RLHFEvaluator:
 
         comparison["diversity"] = {
             "baseline": baseline_diversity,
-            "rlhf": rlhf_diversity,
+            "rlh": rlhf_diversity,
             "improvement": diversity_improvement,
         }
 
@@ -437,7 +448,7 @@ class RLHFEvaluator:
 
             comparison["text_metrics"][metric] = {
                 "baseline": baseline_score,
-                "rlhf": rlhf_score,
+                "rlh": rlhf_score,
                 "improvement": improvement,
                 "improvement_percent": improvement_percent,
             }
@@ -448,7 +459,7 @@ class RLHFEvaluator:
         """Save evaluation results to file."""
         timestamp = int(time.time())
         results_file = os.path.join(
-            self.config.output_dir, f"evaluation_results_{timestamp}.json"
+            self.config.output_dir, "evaluation_results_{timestamp}.json"
         )
 
         # Convert numpy types to native Python types for JSON serialization
@@ -471,7 +482,7 @@ class RLHFEvaluator:
         with open(results_file, "w") as f:
             json.dump(results, f, indent=2)
 
-        logger.info(f"Evaluation results saved to: {results_file}")
+        logger.info("Evaluation results saved to: {results_file}")
 
         # Create summary report
         self._create_summary_report(results, results_file)
@@ -489,30 +500,30 @@ class RLHFEvaluator:
 
             for metric in ["factuality", "helpfulness", "coherence"]:
                 comp = results["comparison"][metric]
-                f.write(f"{metric.capitalize()}:\n")
-                f.write(f"  Baseline: {comp['baseline']:.3f}\n")
-                f.write(f"  RLHF: {comp['rlhf']:.3f}\n")
+                f.write("{metric.capitalize()}:\n")
+                f.write("  Baseline: {comp['baseline']:.3f}\n")
+                f.write("  RLHF: {comp['rlhf']:.3f}\n")
                 f.write(
-                    f"  Improvement: {comp['improvement']:.3f} ({comp['improvement_percent']:.1f}%)\n\n"
+                    "  Improvement: {comp['improvement']:.3f} ({comp['improvement_percent']:.1f}%)\n\n"
                 )
 
-            f.write(f"Diversity:\n")
+            f.write("Diversity:\n")
             f.write(
-                f"  Baseline: {results['comparison']['diversity']['baseline']:.3f}\n"
+                "  Baseline: {results['comparison']['diversity']['baseline']:.3f}\n"
             )
-            f.write(f"  RLHF: {results['comparison']['diversity']['rlhf']:.3f}\n")
+            f.write("  RLHF: {results['comparison']['diversity']['rlhf']:.3f}\n")
             f.write(
-                f"  Improvement: {results['comparison']['diversity']['improvement']:.3f}\n\n"
+                "  Improvement: {results['comparison']['diversity']['improvement']:.3f}\n\n"
             )
 
             f.write("TEXT METRICS:\n")
             f.write("-" * 15 + "\n")
             for metric, comp in results["comparison"]["text_metrics"].items():
-                f.write(f"{metric}:\n")
-                f.write(f"  Baseline: {comp['baseline']:.3f}\n")
-                f.write(f"  RLHF: {comp['rlhf']:.3f}\n")
+                f.write("{metric}:\n")
+                f.write("  Baseline: {comp['baseline']:.3f}\n")
+                f.write("  RLHF: {comp['rlhf']:.3f}\n")
                 f.write(
-                    f"  Improvement: {comp['improvement']:.3f} ({comp['improvement_percent']:.1f}%)\n\n"
+                    "  Improvement: {comp['improvement']:.3f} ({comp['improvement_percent']:.1f}%)\n\n"
                 )
 
             f.write("CONCLUSION:\n")
@@ -538,9 +549,9 @@ class RLHFEvaluator:
                     "⚠️ RLHF training did not show clear improvement. Consider adjusting parameters.\n"
                 )
 
-            f.write(f"Average improvement: {avg_improvement:.1f}%\n")
+            f.write("Average improvement: {avg_improvement:.1f}%\n")
 
-        logger.info(f"Summary report saved to: {report_file}")
+        logger.info("Summary report saved to: {report_file}")
 
     def run_human_evaluation(self, num_samples: int = 5) -> Dict[str, Any]:
         """Run human evaluation (blind A/B testing)."""
@@ -568,22 +579,22 @@ class RLHFEvaluator:
             if np.random.random() > 0.5:
                 response_a = baseline_response
                 response_b = rlhf_response
-                order = ["baseline", "rlhf"]
+                order = ["baseline", "rlh"]
             else:
                 response_a = rlhf_response
                 response_b = baseline_response
-                order = ["rlhf", "baseline"]
+                order = ["rlh", "baseline"]
 
             # Human evaluation interface
-            print(f"\n{'='*60}")
-            print(f"HUMAN EVALUATION - Sample {i+1}/{len(selected_prompts)}")
-            print(f"{'='*60}")
-            print(f"Prompt: {prompt}")
-            print(f"\nResponse A:")
-            print(f"{response_a}")
-            print(f"\nResponse B:")
-            print(f"{response_b}")
-            print(f"\nWhich response is better? (1=A, 2=B, 3=Equal): ", end="")
+            print("\n{'='*60}")
+            print("HUMAN EVALUATION - Sample {i+1}/{len(selected_prompts)}")
+            print("{'='*60}")
+            print("Prompt: {prompt}")
+            print("\nResponse A:")
+            print("{response_a}")
+            print("\nResponse B:")
+            print("{response_b}")
+            print("\nWhich response is better? (1=A, 2=B, 3=Equal): ", end="")
 
             try:
                 choice = int(input())
@@ -612,9 +623,7 @@ class RLHFEvaluator:
         baseline_wins = sum(
             1 for result in evaluation_results if result["winner"] == "baseline"
         )
-        rlhf_wins = sum(
-            1 for result in evaluation_results if result["winner"] == "rlhf"
-        )
+        rlhf_wins = sum(1 for result in evaluation_results if result["winner"] == "rlh")
         ties = sum(1 for result in evaluation_results if result["winner"] == "equal")
 
         human_eval_results = {
@@ -631,5 +640,5 @@ class RLHFEvaluator:
             "detailed_results": evaluation_results,
         }
 
-        logger.info(f"Human evaluation results: {human_eval_results}")
+        logger.info("Human evaluation results: {human_eval_results}")
         return human_eval_results

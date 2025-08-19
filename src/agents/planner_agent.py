@@ -2,10 +2,27 @@
 Planner Agent for task decomposition and tool selection.
 """
 
+import hashlib
+import json
+import os
+import random
+import re
 import time
-from typing import Any, Dict, List
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 from .base_agent import AgentResult, AgentTask, BaseAgent
 
@@ -43,7 +60,7 @@ class PlannerAgent(BaseAgent):
         }
 
         logger.info(
-            f"Planner Agent {agent_id} initialized with {len(self.tool_registry)} tool categories"
+            "Planner Agent {agent_id} initialized with {len(self.tool_registry)} tool categories"
         )
 
     async def execute_task(self, task: AgentTask) -> AgentResult:
@@ -67,7 +84,7 @@ class PlannerAgent(BaseAgent):
             elif task.task_type == "workflow_planning":
                 result_data = await self._create_workflow(task)
             else:
-                raise ValueError(f"Unknown task type: {task.task_type}")
+                raise ValueError("Unknown task type: {task.task_type}")
 
             execution_time = time.time() - start_time
             result = AgentResult(
@@ -90,7 +107,7 @@ class PlannerAgent(BaseAgent):
                 execution_time=execution_time,
                 metadata={"task_type": task.task_type},
             )
-            logger.error(f"Planner Agent error: {e}")
+            logger.error("Planner Agent error: {e}")
 
         self._log_task_complete(task, result)
         self._update_metrics(result)
@@ -108,8 +125,6 @@ class PlannerAgent(BaseAgent):
         Returns:
             Dict containing decomposed subtasks
         """
-        query = task.parameters.get("query", "")
-        context = task.parameters.get("context", {})
 
         # Simple task decomposition logic
         subtasks = []
@@ -119,7 +134,7 @@ class PlannerAgent(BaseAgent):
             {
                 "task_id": self._create_task_id(),
                 "task_type": "research",
-                "description": f"Research information for: {query}",
+                "description": "Research information for: {query}",
                 "priority": 1,
                 "parameters": {
                     "query": query,
@@ -135,7 +150,7 @@ class PlannerAgent(BaseAgent):
                 {
                     "task_id": self._create_task_id(),
                     "task_type": "analysis",
-                    "description": f"Analyze research results for: {query}",
+                    "description": "Analyze research results for: {query}",
                     "priority": 2,
                     "dependencies": [subtasks[0]["task_id"]],
                     "parameters": {
@@ -150,7 +165,7 @@ class PlannerAgent(BaseAgent):
             {
                 "task_id": self._create_task_id(),
                 "task_type": "generation",
-                "description": f"Generate response for: {query}",
+                "description": "Generate response for: {query}",
                 "priority": 3,
                 "dependencies": [subtasks[0]["task_id"]],
                 "parameters": {
@@ -166,7 +181,7 @@ class PlannerAgent(BaseAgent):
             {
                 "task_id": self._create_task_id(),
                 "task_type": "validation",
-                "description": f"Validate response for: {query}",
+                "description": "Validate response for: {query}",
                 "priority": 4,
                 "dependencies": [subtasks[-1]["task_id"]],
                 "parameters": {

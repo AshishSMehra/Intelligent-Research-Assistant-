@@ -2,11 +2,28 @@
 GPU Configuration for Fine-tuning with Apple Silicon (MPS) and CUDA support.
 """
 
+import hashlib
+import json
 import os
-from typing import Any, Dict, Optional
+import random
+import re
+import time
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
 import torch
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 
 class GPUConfig:
@@ -18,7 +35,7 @@ class GPUConfig:
         self.device_info = self._get_device_info()
         self.optimization_config = self._get_optimization_config()
 
-        logger.info(f"GPU Configuration initialized: {self.device_info}")
+        logger.info("GPU Configuration initialized: {self.device_info}")
 
     def _detect_device(self) -> torch.device:
         """
@@ -259,7 +276,7 @@ class GPUConfig:
             # MPS memory optimization
             torch.mps.empty_cache()
 
-        logger.info(f"Memory optimization applied for {self.device.type}")
+        logger.info("Memory optimization applied for {self.device.type}")
 
     def get_dataloader_config(self) -> Dict[str, Any]:
         """

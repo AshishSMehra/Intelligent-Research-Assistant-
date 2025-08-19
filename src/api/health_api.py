@@ -2,8 +2,28 @@
 Health check API endpoints for the Intelligent Research Assistant.
 """
 
+import hashlib
+import json
+import os
+import random
+import re
+import time
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
 from fastapi import APIRouter
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 # Create router
 health_router = APIRouter(prefix="/health", tags=["Health"])
@@ -64,7 +84,7 @@ async def detailed_health_check():
         }
 
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        logger.error("Health check failed: {e}")
         return {
             "status": "unhealthy",
             "service": "intelligent-research-assistant",

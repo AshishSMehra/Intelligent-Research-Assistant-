@@ -5,15 +5,27 @@ This module implements the human feedback collection system for RLHF.
 It provides interfaces for collecting user judgments/preferences on LLM outputs.
 """
 
+import hashlib
 import json
 import os
+import random
+import re
 import time
-from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional, Tuple
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
 import pandas as pd
-from datasets import Dataset
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 
 @dataclass
@@ -71,7 +83,7 @@ class FeedbackDataset:
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
-        logger.info(f"Feedback dataset saved: {filepath}")
+        logger.info("Feedback dataset saved: {filepath}")
 
     @classmethod
     def load(cls, filepath: str) -> "FeedbackDataset":
@@ -105,14 +117,14 @@ class FeedbackCollector:
         print("\n" + "=" * 60)
         print("HUMAN FEEDBACK COLLECTION")
         print("=" * 60)
-        print(f"Prompt: {prompt}")
+        print("Prompt: {prompt}")
         print("\nResponses to rate:")
 
         for i, response in enumerate(responses):
-            print(f"\n--- Response {i+1} ---")
-            print(f"Text: {response['text']}")
+            print("\n--- Response {i+1} ---")
+            print("Text: {response['text']}")
             if "model" in response:
-                print(f"Model: {response['model']}")
+                print("Model: {response['model']}")
 
         print("\nRate each response on a scale of 1-5:")
         print("1 = Very Poor, 2 = Poor, 3 = Fair, 4 = Good, 5 = Excellent")
@@ -121,7 +133,7 @@ class FeedbackCollector:
         for i, response in enumerate(responses):
             while True:
                 try:
-                    rating = int(input(f"Rating for Response {i+1} (1-5): "))
+                    rating = int(input("Rating for Response {i+1} (1-5): "))
                     if 1 <= rating <= 5:
                         ratings.append(rating)
                         break
@@ -153,7 +165,7 @@ class FeedbackCollector:
     ) -> FeedbackDataset:
         """Collect feedback for a batch of prompts and responses."""
         if models is None:
-            models = [f"model_{i}" for i in range(len(model_responses[0]))]
+            models = ["model_{i}" for i in range(len(model_responses[0]))]
 
         examples = []
 
@@ -164,7 +176,7 @@ class FeedbackCollector:
                 response_data.append(
                     {
                         "text": response_text,
-                        "model": models[j] if j < len(models) else f"model_{j}",
+                        "model": models[j] if j < len(models) else "model_{j}",
                     }
                 )
 
@@ -174,13 +186,13 @@ class FeedbackCollector:
             elif interface == "web":
                 feedback = self.create_feedback_interface_web(prompt, response_data)
             else:
-                raise ValueError(f"Unknown interface: {interface}")
+                raise ValueError("Unknown interface: {interface}")
 
             # Create feedback example
             example = FeedbackExample(
                 prompt=feedback["prompt"],
                 responses=feedback["responses"],
-                feedback_id=f"feedback_{int(time.time())}_{i}",
+                feedback_id="feedback_{int(time.time())}_{i}",
                 timestamp=feedback["timestamp"],
             )
 
@@ -190,7 +202,7 @@ class FeedbackCollector:
         # Create dataset
         dataset = FeedbackDataset(
             examples=examples,
-            dataset_name=f"human_feedback_{int(time.time())}",
+            dataset_name="human_feedback_{int(time.time())}",
             created_at=time.time(),
         )
 
@@ -204,7 +216,7 @@ class FeedbackCollector:
     ) -> FeedbackDataset:
         """Generate synthetic feedback for testing purposes."""
         if models is None:
-            models = [f"model_{i}" for i in range(len(model_responses[0]))]
+            models = ["model_{i}" for i in range(len(model_responses[0]))]
 
         examples = []
 
@@ -219,14 +231,14 @@ class FeedbackCollector:
                     {
                         "text": response_text,
                         "rating": rating,
-                        "model": models[j] if j < len(models) else f"model_{j}",
+                        "model": models[j] if j < len(models) else "model_{j}",
                     }
                 )
 
             example = FeedbackExample(
                 prompt=prompt,
                 responses=response_data,
-                feedback_id=f"synthetic_feedback_{int(time.time())}_{i}",
+                feedback_id="synthetic_feedback_{int(time.time())}_{i}",
                 timestamp=time.time(),
             )
 
@@ -234,7 +246,7 @@ class FeedbackCollector:
 
         dataset = FeedbackDataset(
             examples=examples,
-            dataset_name=f"synthetic_feedback_{int(time.time())}",
+            dataset_name="synthetic_feedback_{int(time.time())}",
             created_at=time.time(),
         )
 
@@ -276,7 +288,7 @@ class FeedbackCollector:
     ) -> str:
         """Save feedback dataset to file."""
         if filename is None:
-            filename = f"{dataset.dataset_name}.json"
+            filename = "{dataset.dataset_name}.json"
 
         filepath = os.path.join(self.output_dir, filename)
         dataset.save(filepath)

@@ -2,9 +2,27 @@
 Search service for semantic search functionality.
 """
 
-from typing import Any, Dict, List, Optional
+import hashlib
+import json
+import os
+import random
+import re
+import time
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 from ..models.search import SearchQuery, SearchResult
 from ..pipeline.pipeline import search_similar_chunks
@@ -37,7 +55,7 @@ class SearchService:
             List of search results
         """
         try:
-            logger.info(f"Performing semantic search: {query[:50]}...")
+            logger.info("Performing semantic search: {query[:50]}...")
 
             # Use the existing pipeline function
             search_results = search_similar_chunks(
@@ -62,11 +80,11 @@ class SearchService:
                 )
                 results.append(search_result)
 
-            logger.info(f"Found {len(results)} search results")
+            logger.info("Found {len(results)} search results")
             return results
 
         except Exception as e:
-            logger.error(f"Error in semantic search: {e}")
+            logger.error("Error in semantic search: {e}")
             return []
 
     async def search_by_document(
@@ -85,17 +103,17 @@ class SearchService:
         try:
             from ..pipeline.pipeline import search_by_document
 
-            logger.info(f"Searching document: {document_id}")
+            logger.info("Searching document: {document_id}")
 
             results = search_by_document(
                 document_id=document_id, include_text=include_text
             )
 
-            logger.info(f"Found {len(results)} chunks for document {document_id}")
+            logger.info("Found {len(results)} chunks for document {document_id}")
             return results
 
         except Exception as e:
-            logger.error(f"Error searching document {document_id}: {e}")
+            logger.error("Error searching document {document_id}: {e}")
             return []
 
     async def get_collection_stats(self) -> Dict[str, Any]:
@@ -113,5 +131,5 @@ class SearchService:
             return stats
 
         except Exception as e:
-            logger.error(f"Error getting collection stats: {e}")
+            logger.error("Error getting collection stats: {e}")
             return {"error": str(e)}

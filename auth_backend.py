@@ -4,13 +4,25 @@ Enhanced Mock Backend for Intelligent Research Assistant
 Includes JWT authentication, CORS, and secure token handling
 """
 
+import hashlib
+import os
 import random
 import time
 import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 app = Flask(__name__)
 
@@ -92,8 +104,8 @@ def auth_login():
 
     if username in valid_users and valid_users[username]["password"] == password:
         # Generate mock JWT tokens
-        access_token = f"mock_access_token_{username}_{int(time.time())}"
-        refresh_token = f"mock_refresh_token_{username}_{int(time.time())}"
+        access_token = "mock_access_token_{username}_{int(time.time())}"
+        refresh_token = "mock_refresh_token_{username}_{int(time.time())}"
 
         return jsonify(
             {
@@ -104,7 +116,7 @@ def auth_login():
                 "user": {
                     "id": str(uuid.uuid4()),
                     "username": username,
-                    "email": f"{username}@example.com",
+                    "email": "{username}@example.com",
                     "roles": valid_users[username]["roles"],
                     "permissions": valid_users[username]["permissions"],
                 },
@@ -164,7 +176,7 @@ def auth_me():
                     {
                         "id": str(uuid.uuid4()),
                         "username": username,
-                        "email": f"{username}@example.com",
+                        "email": "{username}@example.com",
                         "roles": valid_users[username]["roles"],
                         "permissions": valid_users[username]["permissions"],
                     }
@@ -188,8 +200,8 @@ def auth_refresh():
             username = refresh_token.split("_")[3]  # Extract username from token
 
             # Generate new tokens
-            new_access_token = f"mock_access_token_{username}_{int(time.time())}"
-            new_refresh_token = f"mock_refresh_token_{username}_{int(time.time())}"
+            new_access_token = "mock_access_token_{username}_{int(time.time())}"
+            new_refresh_token = "mock_refresh_token_{username}_{int(time.time())}"
 
             valid_users = {
                 "admin": {"roles": ["admin"], "permissions": ["*"]},
@@ -220,7 +232,7 @@ def auth_refresh():
                         "user": {
                             "id": str(uuid.uuid4()),
                             "username": username,
-                            "email": f"{username}@example.com",
+                            "email": "{username}@example.com",
                             "roles": valid_users[username]["roles"],
                             "permissions": valid_users[username]["permissions"],
                         },
@@ -282,13 +294,13 @@ def chat():
 
     # Mock responses based on query content
     if "hello" in query.lower():
-        response_text = f"Hello {username}! I'm your AI research assistant. I can help you analyze documents, answer questions, and provide insights from your research materials."
+        response_text = "Hello {username}! I'm your AI research assistant. I can help you analyze documents, answer questions, and provide insights from your research materials."
     elif "document" in query.lower():
         response_text = "I can help you process and analyze documents. Upload your PDFs, DOCs, or text files and I'll extract key information, create summaries, and answer questions about the content."
     elif "search" in query.lower():
         response_text = "I can search through your document collection using semantic search. Just describe what you're looking for in natural language and I'll find relevant information."
     else:
-        response_text = f"I understand you're asking about: '{query}'. Based on my analysis of your documents, here are some key insights and relevant information I found."
+        response_text = "I understand you're asking about: '{query}'. Based on my analysis of your documents, here are some key insights and relevant information I found."
 
     return jsonify(
         {
@@ -298,7 +310,7 @@ def chat():
                     "title": "Research Document 1",
                     "content": "This is a sample document excerpt that provides relevant context...",
                     "score": 0.89,
-                    "metadata": {"page": 1, "source": "doc1.pdf"},
+                    "metadata": {"page": 1, "source": "doc1.pd"},
                 }
             ],
             "metadata": {
@@ -352,22 +364,22 @@ def search():
 
     data = request.get_json()
     query = data.get("query", "")
-    max_results = data.get("max_results", 10)
 
     # Simulate processing time
     time.sleep(random.uniform(0.5, 1.5))
 
     # Generate mock results
     results = []
+    max_results = 10  # Default max results
     for i in range(min(max_results, random.randint(3, 8))):
         results.append(
             {
-                "title": f"Document {i+1}: {query} Analysis",
-                "content": f"This document contains relevant information about {query}. Here's an excerpt that shows the key findings and methodology used in the research...",
+                "title": "Document {i+1}: {query} Analysis",
+                "content": "This document contains relevant information about {query}. Here's an excerpt that shows the key findings and methodology used in the research...",
                 "score": random.uniform(0.6, 0.95),
                 "metadata": {
                     "page": random.randint(1, 20),
-                    "source": f"document_{i+1}.pdf",
+                    "source": "document_{i+1}.pdf",
                     "document_id": str(uuid.uuid4()),
                 },
             }
@@ -444,8 +456,8 @@ def get_documents():
         documents.append(
             {
                 "id": str(uuid.uuid4()),
-                "filename": f"document_{i+1}.pdf",
-                "title": f"Research Document {i+1}",
+                "filename": "document_{i+1}.pdf",
+                "title": "Research Document {i+1}",
                 "size": random.randint(100000, 5000000),
                 "pages": random.randint(5, 50),
                 "uploaded_at": datetime.now().isoformat(),

@@ -2,13 +2,28 @@
 Base Agent class for the Multi-Agent Orchestration system.
 """
 
+import hashlib
+import json
+import os
+import random
+import re
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 
 @dataclass
@@ -71,7 +86,7 @@ class BaseAgent(ABC):
             "total_execution_time": 0.0,
         }
 
-        logger.info(f"Initialized {self.agent_type} agent: {agent_id}")
+        logger.info("Initialized {self.agent_type} agent: {agent_id}")
 
     @abstractmethod
     async def execute_task(self, task: AgentTask) -> AgentResult:
@@ -117,14 +132,14 @@ class BaseAgent(ABC):
     def _log_task_start(self, task: AgentTask):
         """Log task start."""
         logger.info(
-            f"Agent {self.agent_id} starting task: {task.task_id} ({task.task_type})"
+            "Agent {self.agent_id} starting task: {task.task_id} ({task.task_type})"
         )
 
     def _log_task_complete(self, task: AgentTask, result: AgentResult):
         """Log task completion."""
         status = "SUCCESS" if result.success else "FAILED"
         logger.info(
-            f"Agent {self.agent_id} completed task {task.task_id}: {status} ({result.execution_time:.3f}s)"
+            "Agent {self.agent_id} completed task {task.task_id}: {status} ({result.execution_time:.3f}s)"
         )
 
     def _update_metrics(self, result: AgentResult):
@@ -138,14 +153,14 @@ class BaseAgent(ABC):
 
     def _create_task_id(self) -> str:
         """Create a unique task ID."""
-        return f"{self.agent_id}_{uuid.uuid4().hex[:8]}"
+        return "{self.agent_id}_{uuid.uuid4().hex[:8]}"
 
     def deactivate(self):
         """Deactivate the agent."""
         self.is_active = False
-        logger.info(f"Agent {self.agent_id} deactivated")
+        logger.info("Agent {self.agent_id} deactivated")
 
     def activate(self):
         """Activate the agent."""
         self.is_active = True
-        logger.info(f"Agent {self.agent_id} activated")
+        logger.info("Agent {self.agent_id} activated")

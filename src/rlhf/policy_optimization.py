@@ -5,17 +5,28 @@ This module implements the PPO-based policy optimization for RLHF.
 It adjusts the base LLM to maximize reward signals from the reward model.
 """
 
+import hashlib
+import json
 import os
+import random
 import time
+import uuid
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
+import pandas as pd
+import requests
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from datasets import Dataset
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
 
 # Import TRL for PPO (if available)
@@ -126,7 +137,7 @@ class PolicyOptimizer:
             return self.reward_model.get_reward(prompt, response)
         else:
             # Fallback for TRL models
-            text = f"{prompt} {response}"
+            text = "{prompt} {response}"
             inputs = self.tokenizer(
                 text,
                 truncation=True,
@@ -200,7 +211,7 @@ class PolicyOptimizer:
         self.policy_model.save_pretrained(model_path)
         self.tokenizer.save_pretrained(model_path)
 
-        logger.info(f"PPO training completed. Model saved to: {model_path}")
+        logger.info("PPO training completed. Model saved to: {model_path}")
         return self.policy_model
 
     def _train_with_custom_ppo(self, prompts: List[str], num_iterations: int):
@@ -214,7 +225,6 @@ class PolicyOptimizer:
         for iteration in range(num_iterations):
             total_loss = 0
             total_reward = 0
-            total_kl = 0
 
             # Sample batch of prompts
             batch_prompts = np.random.choice(prompts, size=self.config.batch_size)
@@ -248,7 +258,7 @@ class PolicyOptimizer:
                 avg_loss = total_loss / self.config.batch_size
                 avg_reward = total_reward / self.config.batch_size
                 logger.info(
-                    f"Iteration {iteration}: Loss={avg_loss:.4f}, Avg Reward={avg_reward:.4f}"
+                    "Iteration {iteration}: Loss={avg_loss:.4f}, Avg Reward={avg_reward:.4f}"
                 )
 
         # Save the trained model
@@ -256,13 +266,13 @@ class PolicyOptimizer:
         self.policy_model.save_pretrained(model_path)
         self.tokenizer.save_pretrained(model_path)
 
-        logger.info(f"Custom PPO training completed. Model saved to: {model_path}")
+        logger.info("Custom PPO training completed. Model saved to: {model_path}")
         return self.policy_model
 
     def _compute_policy_loss(self, prompt: str, response: str, reward: float):
         """Compute policy loss for PPO."""
         # This is a simplified version - full PPO would need more complex implementation
-        text = f"{prompt} {response}"
+        text = "{prompt} {response}"
         inputs = self.tokenizer(
             text,
             return_tensors="pt",
@@ -306,7 +316,7 @@ class PolicyOptimizer:
             "num_samples": len(test_prompts),
         }
 
-        logger.info(f"Policy evaluation results: {metrics}")
+        logger.info("Policy evaluation results: {metrics}")
         return metrics, responses
 
 

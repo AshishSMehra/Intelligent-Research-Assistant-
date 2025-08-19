@@ -5,17 +5,29 @@ This module implements the reward model training system for RLHF.
 It converts human preferences into a learned reward signal using pairwise loss.
 """
 
+import hashlib
+import json
 import os
+import random
+import re
 import time
+import uuid
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
+import pandas as pd
+import requests
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from datasets import Dataset
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -77,7 +89,7 @@ class RewardModel(nn.Module):
     def get_reward(self, prompt: str, response: str) -> float:
         """Get reward score for a prompt-response pair."""
         # Concatenate prompt and response
-        text = f"{prompt} {response}"
+        text = "{prompt} {response}"
 
         # Tokenize
         inputs = self.tokenizer(
@@ -156,7 +168,7 @@ class RewardModelTrainer:
                     )
 
         logger.info(
-            f"Created {len(preference_data)} preference pairs from feedback dataset"
+            "Created {len(preference_data)} preference pairs from feedback dataset"
         )
         return Dataset.from_list(preference_data)
 
@@ -164,7 +176,7 @@ class RewardModelTrainer:
         """Tokenize the preference pairs."""
         # Tokenize chosen responses
         chosen_texts = [
-            f"{prompt} {chosen}"
+            "{prompt} {chosen}"
             for prompt, chosen in zip(examples["prompt"], examples["chosen"])
         ]
         chosen_tokens = self.tokenizer(
@@ -177,7 +189,7 @@ class RewardModelTrainer:
 
         # Tokenize rejected responses
         rejected_texts = [
-            f"{prompt} {rejected}"
+            "{prompt} {rejected}"
             for prompt, rejected in zip(examples["prompt"], examples["rejected"])
         ]
         rejected_tokens = self.tokenizer(
@@ -263,7 +275,7 @@ class RewardModelTrainer:
         self.reward_model.model.save_pretrained(model_path)
         self.tokenizer.save_pretrained(model_path)
 
-        logger.info(f"Reward model training completed. Model saved to: {model_path}")
+        logger.info("Reward model training completed. Model saved to: {model_path}")
 
         return self.reward_model
 
@@ -330,7 +342,7 @@ class RewardModelTrainer:
             "correct_predictions": correct_predictions,
         }
 
-        logger.info(f"Reward model evaluation results: {metrics}")
+        logger.info("Reward model evaluation results: {metrics}")
         return metrics
 
 

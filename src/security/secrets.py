@@ -9,12 +9,23 @@ import base64
 import hashlib
 import json
 import os
+import random
 import time
+import uuid
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Union
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 # Optional imports for AWS KMS and Vault
 try:
@@ -115,7 +126,7 @@ class AWSKMSManager(SecretsManager):
         # Create bucket if it doesn't exist
         self._ensure_bucket_exists()
 
-        logger.info(f"AWS KMS Manager initialized in region: {self.region_name}")
+        logger.info("AWS KMS Manager initialized in region: {self.region_name}")
 
     def _ensure_bucket_exists(self):
         """Ensure S3 bucket exists for storing encrypted secrets."""
@@ -131,11 +142,11 @@ class AWSKMSManager(SecretsManager):
                             "LocationConstraint": self.region_name
                         },
                     )
-                    logger.info(f"Created S3 bucket: {self.bucket_name}")
+                    logger.info("Created S3 bucket: {self.bucket_name}")
                 except ClientError as create_error:
-                    logger.error(f"Failed to create S3 bucket: {create_error}")
+                    logger.error("Failed to create S3 bucket: {create_error}")
             else:
-                logger.error(f"Error checking S3 bucket: {e}")
+                logger.error("Error checking S3 bucket: {e}")
 
     def encrypt(self, plaintext: str, key_id: str = None) -> str:
         """Encrypt plaintext using AWS KMS."""
@@ -152,10 +163,10 @@ class AWSKMSManager(SecretsManager):
             return base64.b64encode(response["CiphertextBlob"]).decode("utf-8")
 
         except ClientError as e:
-            logger.error(f"AWS KMS encryption failed: {e}")
+            logger.error("AWS KMS encryption failed: {e}")
             raise
         except Exception as e:
-            logger.error(f"Encryption failed: {e}")
+            logger.error("Encryption failed: {e}")
             raise
 
     def decrypt(self, ciphertext: str, key_id: str = None) -> str:
@@ -169,10 +180,10 @@ class AWSKMSManager(SecretsManager):
             return response["Plaintext"].decode("utf-8")
 
         except ClientError as e:
-            logger.error(f"AWS KMS decryption failed: {e}")
+            logger.error("AWS KMS decryption failed: {e}")
             raise
         except Exception as e:
-            logger.error(f"Decryption failed: {e}")
+            logger.error("Decryption failed: {e}")
             raise
 
     def store_secret(
@@ -184,14 +195,13 @@ class AWSKMSManager(SecretsManager):
     ) -> str:
         """Store a secret in S3 with KMS encryption."""
         try:
-            import time
 
             # Encrypt the secret value
             encrypted_value = self.encrypt(value)
 
             # Create metadata
             metadata = SecretMetadata(
-                secret_id=f"secret_{int(time.time())}_{hashlib.md5(name.encode()).hexdigest()[:8]}",
+                secret_id="secret_{int(time.time())}_{hashlib.md5(name.encode()).hexdigest()[:8]}",
                 name=name,
                 description=description or "",
                 created_at=time.time(),
@@ -217,16 +227,16 @@ class AWSKMSManager(SecretsManager):
             # Store in S3
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
-                Key=f"secrets/{metadata.secret_id}.json",
+                Key="secrets/{metadata.secret_id}.json",
                 Body=json.dumps(secret_data),
                 ContentType="application/json",
             )
 
-            logger.info(f"Stored secret: {metadata.secret_id}")
+            logger.info("Stored secret: {metadata.secret_id}")
             return metadata.secret_id
 
         except Exception as e:
-            logger.error(f"Failed to store secret {name}: {e}")
+            logger.error("Failed to store secret {name}: {e}")
             raise
 
     def get_secret(self, secret_id: str) -> Optional[str]:
@@ -234,7 +244,7 @@ class AWSKMSManager(SecretsManager):
         try:
             # Get secret from S3
             response = self.s3_client.get_object(
-                Bucket=self.bucket_name, Key=f"secrets/{secret_id}.json"
+                Bucket=self.bucket_name, Key="secrets/{secret_id}.json"
             )
 
             secret_data = json.loads(response["Body"].read())
@@ -243,18 +253,18 @@ class AWSKMSManager(SecretsManager):
             # Decrypt the value
             decrypted_value = self.decrypt(encrypted_value)
 
-            logger.info(f"Retrieved secret: {secret_id}")
+            logger.info("Retrieved secret: {secret_id}")
             return decrypted_value
 
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
-                logger.warning(f"Secret not found: {secret_id}")
+                logger.warning("Secret not found: {secret_id}")
                 return None
             else:
-                logger.error(f"Failed to retrieve secret {secret_id}: {e}")
+                logger.error("Failed to retrieve secret {secret_id}: {e}")
                 raise
         except Exception as e:
-            logger.error(f"Failed to retrieve secret {secret_id}: {e}")
+            logger.error("Failed to retrieve secret {secret_id}: {e}")
             raise
 
     def update_secret(self, secret_id: str, value: str) -> bool:
@@ -262,7 +272,7 @@ class AWSKMSManager(SecretsManager):
         try:
             # Get existing metadata
             response = self.s3_client.get_object(
-                Bucket=self.bucket_name, Key=f"secrets/{secret_id}.json"
+                Bucket=self.bucket_name, Key="secrets/{secret_id}.json"
             )
 
             secret_data = json.loads(response["Body"].read())
@@ -283,30 +293,30 @@ class AWSKMSManager(SecretsManager):
 
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
-                Key=f"secrets/{secret_id}.json",
+                Key="secrets/{secret_id}.json",
                 Body=json.dumps(updated_secret_data),
                 ContentType="application/json",
             )
 
-            logger.info(f"Updated secret: {secret_id}")
+            logger.info("Updated secret: {secret_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to update secret {secret_id}: {e}")
+            logger.error("Failed to update secret {secret_id}: {e}")
             return False
 
     def delete_secret(self, secret_id: str) -> bool:
         """Delete a secret."""
         try:
             self.s3_client.delete_object(
-                Bucket=self.bucket_name, Key=f"secrets/{secret_id}.json"
+                Bucket=self.bucket_name, Key="secrets/{secret_id}.json"
             )
 
-            logger.info(f"Deleted secret: {secret_id}")
+            logger.info("Deleted secret: {secret_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to delete secret {secret_id}: {e}")
+            logger.error("Failed to delete secret {secret_id}: {e}")
             return False
 
     def list_secrets(self) -> list:
@@ -324,7 +334,7 @@ class AWSKMSManager(SecretsManager):
             return secrets
 
         except Exception as e:
-            logger.error(f"Failed to list secrets: {e}")
+            logger.error("Failed to list secrets: {e}")
             return []
 
 
@@ -350,7 +360,7 @@ class VaultManager(SecretsManager):
         if not self.client.is_authenticated():
             raise ValueError("Failed to authenticate with Vault")
 
-        logger.info(f"Vault Manager initialized with URL: {self.vault_url}")
+        logger.info("Vault Manager initialized with URL: {self.vault_url}")
 
     def encrypt(self, plaintext: str, key_id: str = None) -> str:
         """Encrypt plaintext using Vault's transit engine."""
@@ -363,7 +373,7 @@ class VaultManager(SecretsManager):
             return response["data"]["ciphertext"]
 
         except Exception as e:
-            logger.error(f"Vault encryption failed: {e}")
+            logger.error("Vault encryption failed: {e}")
             raise
 
     def decrypt(self, ciphertext: str, key_id: str = None) -> str:
@@ -377,7 +387,7 @@ class VaultManager(SecretsManager):
             return base64.b64decode(response["data"]["plaintext"]).decode("utf-8")
 
         except Exception as e:
-            logger.error(f"Vault decryption failed: {e}")
+            logger.error("Vault decryption failed: {e}")
             raise
 
     def store_secret(
@@ -389,10 +399,11 @@ class VaultManager(SecretsManager):
     ) -> str:
         """Store a secret in Vault."""
         try:
-            import time
 
             # Create secret ID
-            secret_id = f"secret_{int(time.time())}_{hashlib.md5(name.encode()).hexdigest()[:8]}"
+            secret_id = (
+                "secret_{int(time.time())}_{hashlib.md5(name.encode()).hexdigest()[:8]}"
+            )
 
             # Prepare secret data
             secret_data = {
@@ -409,11 +420,11 @@ class VaultManager(SecretsManager):
                 path=secret_id, secret=secret_data, mount_point=self.mount_point
             )
 
-            logger.info(f"Stored secret in Vault: {secret_id}")
+            logger.info("Stored secret in Vault: {secret_id}")
             return secret_id
 
         except Exception as e:
-            logger.error(f"Failed to store secret {name} in Vault: {e}")
+            logger.error("Failed to store secret {name} in Vault: {e}")
             raise
 
     def get_secret(self, secret_id: str) -> Optional[str]:
@@ -426,17 +437,16 @@ class VaultManager(SecretsManager):
             secret_data = response["data"]["data"]
             value = secret_data["value"]
 
-            logger.info(f"Retrieved secret from Vault: {secret_id}")
+            logger.info("Retrieved secret from Vault: {secret_id}")
             return value
 
         except Exception as e:
-            logger.error(f"Failed to retrieve secret {secret_id} from Vault: {e}")
+            logger.error("Failed to retrieve secret {secret_id} from Vault: {e}")
             return None
 
     def update_secret(self, secret_id: str, value: str) -> bool:
         """Update an existing secret in Vault."""
         try:
-            import time
 
             # Get existing secret data
             response = self.client.secrets.kv.v2.read_secret_version(
@@ -455,11 +465,11 @@ class VaultManager(SecretsManager):
                 path=secret_id, secret=secret_data, mount_point=self.mount_point
             )
 
-            logger.info(f"Updated secret in Vault: {secret_id}")
+            logger.info("Updated secret in Vault: {secret_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to update secret {secret_id} in Vault: {e}")
+            logger.error("Failed to update secret {secret_id} in Vault: {e}")
             return False
 
     def delete_secret(self, secret_id: str) -> bool:
@@ -469,11 +479,11 @@ class VaultManager(SecretsManager):
                 path=secret_id, mount_point=self.mount_point
             )
 
-            logger.info(f"Deleted secret from Vault: {secret_id}")
+            logger.info("Deleted secret from Vault: {secret_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to delete secret {secret_id} from Vault: {e}")
+            logger.error("Failed to delete secret {secret_id} from Vault: {e}")
             return False
 
     def list_secrets(self) -> list:
@@ -486,7 +496,7 @@ class VaultManager(SecretsManager):
             return response["data"]["keys"]
 
         except Exception as e:
-            logger.error(f"Failed to list secrets from Vault: {e}")
+            logger.error("Failed to list secrets from Vault: {e}")
             return []
 
 
@@ -497,7 +507,7 @@ class SecretsManager:
         self.backend = backend
         self.manager = self._initialize_backend()
 
-        logger.info(f"Secrets Manager initialized with backend: {backend}")
+        logger.info("Secrets Manager initialized with backend: {backend}")
 
     def _initialize_backend(self) -> SecretsManager:
         """Initialize the appropriate secrets backend."""
@@ -505,13 +515,13 @@ class SecretsManager:
             try:
                 return AWSKMSManager()
             except Exception as e:
-                logger.warning(f"Failed to initialize AWS KMS: {e}")
+                logger.warning("Failed to initialize AWS KMS: {e}")
 
         if self.backend == "vault" or (self.backend == "auto" and VAULT_AVAILABLE):
             try:
                 return VaultManager()
             except Exception as e:
-                logger.warning(f"Failed to initialize Vault: {e}")
+                logger.warning("Failed to initialize Vault: {e}")
 
         # Fallback to environment variables
         logger.warning("No secure backend available, using environment variables")
@@ -575,9 +585,10 @@ class EnvironmentSecretsManager(SecretsManager):
         tags: Dict[str, str] = None,
     ) -> str:
         """Store secret in memory (for demo purposes)."""
-        import time
 
-        secret_id = f"env_secret_{int(time.time())}_{hashlib.md5(name.encode()).hexdigest()[:8]}"
+        secret_id = (
+            "env_secret_{int(time.time())}_{hashlib.md5(name.encode()).hexdigest()[:8]}"
+        )
         self.secrets[secret_id] = value
         return secret_id
 

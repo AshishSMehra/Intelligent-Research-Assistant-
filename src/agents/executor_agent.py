@@ -2,12 +2,29 @@
 Executor Agent for side effects and external operations.
 """
 
-import asyncio
+import hashlib
 import json
+import asyncio
+import os
+import random
+import re
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 from .base_agent import AgentResult, AgentTask, BaseAgent
 
@@ -57,7 +74,7 @@ class ExecutorAgent(BaseAgent):
         }
 
         logger.info(
-            f"Executor Agent {agent_id} initialized with {len(self.execution_methods)} execution methods"
+            "Executor Agent {agent_id} initialized with {len(self.execution_methods)} execution methods"
         )
 
     async def execute_task(self, task: AgentTask) -> AgentResult:
@@ -82,7 +99,7 @@ class ExecutorAgent(BaseAgent):
             elif task_type == "execution":
                 result_data = await self._execute_side_effects(task)
             else:
-                raise ValueError(f"Unknown task type: {task_type}")
+                raise ValueError("Unknown task type: {task_type}")
 
             execution_time = time.time() - start_time
             result = AgentResult(
@@ -105,7 +122,7 @@ class ExecutorAgent(BaseAgent):
                 execution_time=execution_time,
                 metadata={"task_type": task.task_type},
             )
-            logger.error(f"Executor Agent error: {e}")
+            logger.error("Executor Agent error: {e}")
 
         self._log_task_complete(task, result)
         self._update_metrics(result)
@@ -142,7 +159,7 @@ class ExecutorAgent(BaseAgent):
                     op_task = AgentTask(
                         task_id=self._create_task_id(),
                         task_type=op_type,
-                        description=f"Execute {op_type} operation",
+                        description="Execute {op_type} operation",
                         parameters=op_params,
                     )
 
@@ -156,7 +173,7 @@ class ExecutorAgent(BaseAgent):
                         {
                             "type": op_type,
                             "success": False,
-                            "error": f"Unknown operation type: {op_type}",
+                            "error": "Unknown operation type: {op_type}",
                         }
                     )
                     results["failure_count"] += 1
@@ -189,15 +206,15 @@ class ExecutorAgent(BaseAgent):
 
         # Perform logging based on level
         if log_level == "debug":
-            logger.debug(f"Executor Log: {message}", extra=context)
+            logger.debug("Executor Log: {message}", extra=context)
         elif log_level == "info":
-            logger.info(f"Executor Log: {message}", extra=context)
+            logger.info("Executor Log: {message}", extra=context)
         elif log_level == "warning":
-            logger.warning(f"Executor Log: {message}", extra=context)
+            logger.warning("Executor Log: {message}", extra=context)
         elif log_level == "error":
-            logger.error(f"Executor Log: {message}", extra=context)
+            logger.error("Executor Log: {message}", extra=context)
         else:
-            logger.info(f"Executor Log: {message}", extra=context)
+            logger.info("Executor Log: {message}", extra=context)
 
         return {
             "logged_message": message,
@@ -220,7 +237,6 @@ class ExecutorAgent(BaseAgent):
         endpoint = task.parameters.get("endpoint", "")
         method = task.parameters.get("method", "GET")
         data = task.parameters.get("data", {})
-        headers = task.parameters.get("headers", {})
 
         # Simulate API call (placeholder implementation)
         # In production, use proper HTTP client like aiohttp or httpx
@@ -243,7 +259,7 @@ class ExecutorAgent(BaseAgent):
             }
         elif api_type == "translation":
             response_data = {
-                "translated_text": f"Translated: {data.get('text', '')}",
+                "translated_text": "Translated: {data.get('text', '')}",
                 "source_language": "en",
                 "target_language": "es",
             }
@@ -279,30 +295,30 @@ class ExecutorAgent(BaseAgent):
         try:
             if operation == "read":
                 # Simulate file read
-                result["content"] = f"File content from {file_path}"
+                result["content"] = "File content from {file_path}"
                 result["file_size"] = len(result["content"])
 
             elif operation == "write":
                 # Simulate file write
                 result["bytes_written"] = len(content)
                 result["message"] = (
-                    f"Successfully wrote {len(content)} bytes to {file_path}"
+                    "Successfully wrote {len(content)} bytes to {file_path}"
                 )
 
             elif operation == "append":
                 # Simulate file append
                 result["bytes_appended"] = len(content)
                 result["message"] = (
-                    f"Successfully appended {len(content)} bytes to {file_path}"
+                    "Successfully appended {len(content)} bytes to {file_path}"
                 )
 
             elif operation == "delete":
                 # Simulate file delete
-                result["message"] = f"Successfully deleted {file_path}"
+                result["message"] = "Successfully deleted {file_path}"
 
             else:
                 result["success"] = False
-                result["error"] = f"Unknown file operation: {operation}"
+                result["error"] = "Unknown file operation: {operation}"
 
         except Exception as e:
             result["success"] = False
@@ -322,8 +338,6 @@ class ExecutorAgent(BaseAgent):
         """
         operation = task.parameters.get("operation", "query")
         table = task.parameters.get("table", "")
-        query = task.parameters.get("query", "")
-        data = task.parameters.get("data", {})
 
         result = {"operation": operation, "table": table, "success": True}
 
@@ -331,15 +345,15 @@ class ExecutorAgent(BaseAgent):
             if operation == "insert":
                 result["rows_affected"] = 1
                 result["inserted_id"] = "mock_id_123"
-                result["message"] = f"Successfully inserted data into {table}"
+                result["message"] = "Successfully inserted data into {table}"
 
             elif operation == "update":
                 result["rows_affected"] = 1
-                result["message"] = f"Successfully updated {table}"
+                result["message"] = "Successfully updated {table}"
 
             elif operation == "delete":
                 result["rows_affected"] = 1
-                result["message"] = f"Successfully deleted from {table}"
+                result["message"] = "Successfully deleted from {table}"
 
             elif operation == "query":
                 result["rows_returned"] = 5
@@ -348,11 +362,11 @@ class ExecutorAgent(BaseAgent):
                     {"id": 2, "name": "Sample 2"},
                     {"id": 3, "name": "Sample 3"},
                 ]
-                result["message"] = f"Successfully queried {table}"
+                result["message"] = "Successfully queried {table}"
 
             else:
                 result["success"] = False
-                result["error"] = f"Unknown database operation: {operation}"
+                result["error"] = "Unknown database operation: {operation}"
 
         except Exception as e:
             result["success"] = False
@@ -385,11 +399,11 @@ class ExecutorAgent(BaseAgent):
             "message": message,
             "sent_at": time.time(),
             "status": "sent",
-            "notification_id": f"notif_{int(time.time())}",
+            "notification_id": "notif_{int(time.time())}",
         }
 
         # Log the notification
-        logger.info(f"Notification sent: {notification_type} to {recipient}")
+        logger.info("Notification sent: {notification_type} to {recipient}")
 
         return result
 
@@ -416,7 +430,7 @@ class ExecutorAgent(BaseAgent):
 
         # Log metrics collection
         logger.info(
-            f"Metrics collected: {len(metrics_data)} metrics stored in {storage_type}"
+            "Metrics collected: {len(metrics_data)} metrics stored in {storage_type}"
         )
 
         return {

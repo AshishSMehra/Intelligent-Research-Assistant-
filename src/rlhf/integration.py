@@ -5,15 +5,27 @@ This module implements the integration of RLHF models into the production system
 It provides A/B testing capabilities and live feedback collection.
 """
 
+import hashlib
 import json
 import os
 import random
+import re
 import time
-from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional, Tuple
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
 import torch
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -79,21 +91,21 @@ class RLHFIntegration:
             model.eval()  # Set to evaluation mode
             return model
         except Exception as e:
-            logger.error(f"Failed to load model from {model_path}: {e}")
+            logger.error("Failed to load model from {model_path}: {e}")
             return None
 
     def _init_feedback_collection(self):
         """Initialize feedback collection system."""
         os.makedirs(self.config.feedback_storage_path, exist_ok=True)
         self.feedback_file = os.path.join(
-            self.config.feedback_storage_path, f"live_feedback_{int(time.time())}.jsonl"
+            self.config.feedback_storage_path, "live_feedback_{int(time.time())}.jsonl"
         )
 
         # Initialize feedback file
         with open(self.feedback_file, "w") as f:
             f.write("")  # Create empty file
 
-        logger.info(f"Feedback collection initialized: {self.feedback_file}")
+        logger.info("Feedback collection initialized: {self.feedback_file}")
 
     def generate_response(
         self,
@@ -110,7 +122,7 @@ class RLHFIntegration:
         if use_rlhf and self.rlhf_model is not None:
             model = self.rlhf_model
             tokenizer = self.rlhf_tokenizer
-            model_type = "rlhf"
+            model_type = "rlh"
             self.ab_test_stats["rlhf_requests"] += 1
         else:
             model = self.baseline_model
@@ -133,10 +145,10 @@ class RLHFIntegration:
             "timestamp": time.time(),
             "user_id": user_id,
             "session_id": session_id,
-            "request_id": f"req_{int(time.time())}_{random.randint(1000, 9999)}",
+            "request_id": "req_{int(time.time())}_{random.randint(1000, 9999)}",
         }
 
-        logger.info(f"Generated response using {model_type} model for user {user_id}")
+        logger.info("Generated response using {model_type} model for user {user_id}")
         return response_obj
 
     def _generate_with_model(
@@ -179,7 +191,7 @@ class RLHFIntegration:
 
         # Validate rating
         if not (1 <= rating <= 5):
-            logger.error(f"Invalid rating: {rating}. Must be between 1 and 5.")
+            logger.error("Invalid rating: {rating}. Must be between 1 and 5.")
             return False
 
         # Create feedback object
@@ -197,16 +209,16 @@ class RLHFIntegration:
                 f.write(json.dumps(feedback_obj) + "\n")
 
             # Update stats
-            if "rlhf" in request_id:
+            if "rlh" in request_id:
                 self.ab_test_stats["rlhf_feedback"] += 1
             else:
                 self.ab_test_stats["baseline_feedback"] += 1
 
-            logger.info(f"Feedback collected for request {request_id}: rating={rating}")
+            logger.info("Feedback collected for request {request_id}: rating={rating}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to save feedback: {e}")
+            logger.error("Failed to save feedback: {e}")
             return False
 
     def get_ab_test_stats(self) -> Dict[str, Any]:
@@ -257,7 +269,7 @@ class RLHFIntegration:
                         feedback = json.loads(line)
                         rating = feedback["rating"]
 
-                        if "rlhf" in feedback.get("request_id", ""):
+                        if "rlh" in feedback.get("request_id", ""):
                             rlhf_ratings.append(rating)
                         else:
                             baseline_ratings.append(rating)
@@ -274,7 +286,7 @@ class RLHFIntegration:
                     ),
                     "ratings": baseline_ratings,
                 },
-                "rlhf": {
+                "rlh": {
                     "count": len(rlhf_ratings),
                     "average_rating": (
                         sum(rlhf_ratings) / len(rlhf_ratings) if rlhf_ratings else 0
@@ -286,7 +298,7 @@ class RLHFIntegration:
             # Calculate improvement
             if baseline_ratings and rlhf_ratings:
                 baseline_avg = analysis["baseline"]["average_rating"]
-                rlhf_avg = analysis["rlhf"]["average_rating"]
+                rlhf_avg = analysis["rlh"]["average_rating"]
                 improvement = rlhf_avg - baseline_avg
                 improvement_percent = (
                     (improvement / baseline_avg * 100) if baseline_avg > 0 else 0
@@ -300,22 +312,22 @@ class RLHFIntegration:
             return analysis
 
         except Exception as e:
-            logger.error(f"Failed to analyze feedback: {e}")
+            logger.error("Failed to analyze feedback: {e}")
             return {"error": str(e)}
 
     def update_ab_test_ratio(self, new_ratio: float):
         """Update the A/B test ratio."""
         if 0.0 <= new_ratio <= 1.0:
             self.config.ab_test_ratio = new_ratio
-            logger.info(f"A/B test ratio updated to {new_ratio}")
+            logger.info("A/B test ratio updated to {new_ratio}")
         else:
             logger.error(
-                f"Invalid A/B test ratio: {new_ratio}. Must be between 0.0 and 1.0."
+                "Invalid A/B test ratio: {new_ratio}. Must be between 0.0 and 1.0."
             )
 
     def enable_model(self, model_type: str, enable: bool = True):
         """Enable or disable a specific model."""
-        if model_type == "rlhf":
+        if model_type == "rlh":
             if enable:
                 self.config.ab_test_ratio = 0.5  # Reset to 50/50
                 logger.info("RLHF model enabled")
@@ -329,7 +341,7 @@ class RLHFIntegration:
             else:
                 logger.error("Cannot disable baseline model completely")
         else:
-            logger.error(f"Unknown model type: {model_type}")
+            logger.error("Unknown model type: {model_type}")
 
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about loaded models."""
@@ -358,7 +370,7 @@ class RLHFIntegration:
         if output_path is None:
             timestamp = int(time.time())
             output_path = os.path.join(
-                self.config.feedback_storage_path, f"feedback_dataset_{timestamp}.json"
+                self.config.feedback_storage_path, "feedback_dataset_{timestamp}.json"
             )
 
         # Read all feedback
@@ -369,13 +381,13 @@ class RLHFIntegration:
                     if line.strip():
                         feedback_data.append(json.loads(line))
         except Exception as e:
-            logger.error(f"Failed to read feedback file: {e}")
+            logger.error("Failed to read feedback file: {e}")
             return ""
 
         # Group feedback by request
         request_feedback = {}
         for feedback in feedback_data:
-            request_id = feedback["request_id"]
+            request_id = feedback.get("request_id", "unknown")
             if request_id not in request_feedback:
                 request_feedback[request_id] = []
             request_feedback[request_id].append(feedback)
@@ -396,11 +408,11 @@ class RLHFIntegration:
             with open(output_path, "w") as f:
                 json.dump(dataset, f, indent=2)
 
-            logger.info(f"Feedback dataset exported to: {output_path}")
+            logger.info("Feedback dataset exported to: {output_path}")
             return output_path
 
         except Exception as e:
-            logger.error(f"Failed to export feedback dataset: {e}")
+            logger.error("Failed to export feedback dataset: {e}")
             return ""
 
     def cleanup_old_feedback(self, days_to_keep: int = 30):
@@ -421,11 +433,11 @@ class RLHFIntegration:
                     try:
                         os.remove(filepath)
                         files_removed += 1
-                        logger.info(f"Removed old feedback file: {filename}")
+                        logger.info("Removed old feedback file: {filename}")
                     except Exception as e:
-                        logger.error(f"Failed to remove {filename}: {e}")
+                        logger.error("Failed to remove {filename}: {e}")
 
-        logger.info(f"Cleanup completed: {files_removed} files removed")
+        logger.info("Cleanup completed: {files_removed} files removed")
 
 
 class ProductionRLHFManager:

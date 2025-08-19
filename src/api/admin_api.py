@@ -2,11 +2,28 @@
 Admin API endpoints for monitoring and debugging the multi-agent system.
 """
 
+import hashlib
+import json
+import os
+import random
+import re
 import time
-from typing import Any, Dict, List, Optional
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
 from fastapi import APIRouter, Body, HTTPException, Query
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 from ..agents.agent_orchestrator import AgentOrchestrator
 
@@ -31,9 +48,9 @@ async def get_agents_status():
         return {"status": "success", "agents": metrics}
 
     except Exception as e:
-        logger.error(f"Error getting agents status: {e}")
+        logger.error("Error getting agents status: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to get agents status: {str(e)}"
+            status_code=500, detail="Failed to get agents status: {str(e)}"
         )
 
 
@@ -51,7 +68,7 @@ async def get_agent_details(agent_type: str):
     try:
         if agent_type not in orchestrator.agents:
             raise HTTPException(
-                status_code=404, detail=f"Agent type '{agent_type}' not found"
+                status_code=404, detail="Agent type '{agent_type}' not found"
             )
 
         agent = orchestrator.agents[agent_type]
@@ -62,9 +79,9 @@ async def get_agent_details(agent_type: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting agent details: {e}")
+        logger.error("Error getting agent details: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to get agent details: {str(e)}"
+            status_code=500, detail="Failed to get agent details: {str(e)}"
         )
 
 
@@ -84,13 +101,13 @@ async def activate_agent(agent_type: str):
 
         return {
             "status": "success",
-            "message": f"Agent {agent_type} activated successfully",
+            "message": "Agent {agent_type} activated successfully",
         }
 
     except Exception as e:
-        logger.error(f"Error activating agent: {e}")
+        logger.error("Error activating agent: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to activate agent: {str(e)}"
+            status_code=500, detail="Failed to activate agent: {str(e)}"
         )
 
 
@@ -110,13 +127,13 @@ async def deactivate_agent(agent_type: str):
 
         return {
             "status": "success",
-            "message": f"Agent {agent_type} deactivated successfully",
+            "message": "Agent {agent_type} deactivated successfully",
         }
 
     except Exception as e:
-        logger.error(f"Error deactivating agent: {e}")
+        logger.error("Error deactivating agent: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to deactivate agent: {str(e)}"
+            status_code=500, detail="Failed to deactivate agent: {str(e)}"
         )
 
 
@@ -134,8 +151,8 @@ async def reset_all_agents():
         return {"status": "success", "message": "All agents reset successfully"}
 
     except Exception as e:
-        logger.error(f"Error resetting agents: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to reset agents: {str(e)}")
+        logger.error("Error resetting agents: {e}")
+        raise HTTPException(status_code=500, detail="Failed to reset agents: {str(e)}")
 
 
 @admin_router.get("/workflows")
@@ -159,9 +176,9 @@ async def get_workflow_history(limit: int = Query(10, ge=1, le=100)):
         }
 
     except Exception as e:
-        logger.error(f"Error getting workflow history: {e}")
+        logger.error("Error getting workflow history: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to get workflow history: {str(e)}"
+            status_code=500, detail="Failed to get workflow history: {str(e)}"
         )
 
 
@@ -181,7 +198,7 @@ async def get_workflow_details(workflow_id: str):
 
         if not workflow:
             raise HTTPException(
-                status_code=404, detail=f"Workflow '{workflow_id}' not found"
+                status_code=404, detail="Workflow '{workflow_id}' not found"
             )
 
         return {"status": "success", "workflow": workflow}
@@ -189,9 +206,9 @@ async def get_workflow_details(workflow_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting workflow details: {e}")
+        logger.error("Error getting workflow details: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to get workflow details: {str(e)}"
+            status_code=500, detail="Failed to get workflow details: {str(e)}"
         )
 
 
@@ -209,9 +226,9 @@ async def get_agent_capabilities():
         return {"status": "success", "capabilities": capabilities}
 
     except Exception as e:
-        logger.error(f"Error getting agent capabilities: {e}")
+        logger.error("Error getting agent capabilities: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to get agent capabilities: {str(e)}"
+            status_code=500, detail="Failed to get agent capabilities: {str(e)}"
         )
 
 
@@ -227,17 +244,15 @@ async def test_workflow(query: str = Query(..., description="Test query")):
         Workflow execution result
     """
     try:
-        logger.info(f"Testing workflow with query: {query}")
+        logger.info("Testing workflow with query: {query}")
 
         result = await orchestrator.execute_workflow(query)
 
         return {"status": "success", "test_result": result}
 
     except Exception as e:
-        logger.error(f"Error testing workflow: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to test workflow: {str(e)}"
-        )
+        logger.error("Error testing workflow: {e}")
+        raise HTTPException(status_code=500, detail="Failed to test workflow: {str(e)}")
 
 
 @admin_router.post("/test/agent/{agent_type}")
@@ -261,9 +276,9 @@ async def test_single_agent(
         from ..agents.base_agent import AgentTask
 
         task = AgentTask(
-            task_id=f"test_{int(time.time())}",
+            task_id="test_{int(time.time())}",
             task_type=task_type,
-            description=f"Test task for {agent_type}",
+            description="Test task for {agent_type}",
             parameters=parameters,
         )
 
@@ -282,8 +297,8 @@ async def test_single_agent(
         }
 
     except Exception as e:
-        logger.error(f"Error testing agent: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to test agent: {str(e)}")
+        logger.error("Error testing agent: {e}")
+        raise HTTPException(status_code=500, detail="Failed to test agent: {str(e)}")
 
 
 @admin_router.get("/health")
@@ -310,7 +325,7 @@ async def admin_health_check():
         return health_status
 
     except Exception as e:
-        logger.error(f"Admin health check failed: {e}")
+        logger.error("Admin health check failed: {e}")
         return {"status": "unhealthy", "error": str(e)}
 
 
@@ -341,5 +356,5 @@ async def get_recent_logs(limit: int = Query(50, ge=1, le=200)):
         return {"status": "success", "logs": logs[:limit], "total_logs": len(logs)}
 
     except Exception as e:
-        logger.error(f"Error getting logs: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get logs: {str(e)}")
+        logger.error("Error getting logs: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get logs: {str(e)}")

@@ -6,16 +6,26 @@ to protect the API from malicious usage and ensure fair resource allocation.
 """
 
 import hashlib
-import json
+import os
+import random
 import time
+import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
 import redis
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
 from flask import g, jsonify, request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 
 class RateLimitType(Enum):
@@ -98,24 +108,24 @@ class RateLimiter:
                 token = auth_header.split(" ")[1]
                 payload = jwt.decode(token, options={"verify_signature": False})
                 if "user_id" in payload:
-                    return f"user:{payload['user_id']}"
+                    return "user:{payload['user_id']}"
             except:
                 pass
 
         # Fallback to IP address
-        return f"ip:{request.remote_addr}"
+        return "ip:{request.remote_addr}"
 
     def _get_rate_limit_key(self, client_id: str, window: str) -> str:
         """Get Redis key for rate limiting."""
         current_window = int(time.time() // self.windows[window])
-        return f"rate_limit:{client_id}:{window}:{current_window}"
+        return "rate_limit:{client_id}:{window}:{current_window}"
 
     def is_rate_limited(self, request) -> Tuple[bool, Dict[str, Any]]:
         """Check if request should be rate limited."""
         client_id = self._get_client_id(request)
 
         # Check if client is under penalty
-        penalty_key = f"penalty:{client_id}"
+        penalty_key = "penalty:{client_id}"
         penalty_until = self.redis_client.get(penalty_key)
         if penalty_until:
             penalty_time = float(penalty_until)
@@ -154,7 +164,7 @@ class RateLimiter:
                 )
 
                 return True, {
-                    "error": f"Rate limit exceeded for {window_name}",
+                    "error": "Rate limit exceeded for {window_name}",
                     "retry_after": penalty_duration,
                     "client_id": client_id,
                     "window": window_name,
@@ -198,7 +208,7 @@ class RateLimiter:
         """Reset rate limit for a client."""
         try:
             # Remove penalty
-            penalty_key = f"penalty:{client_id}"
+            penalty_key = "penalty:{client_id}"
             self.redis_client.delete(penalty_key)
 
             # Reset counters
@@ -206,11 +216,11 @@ class RateLimiter:
                 limit_key = self._get_rate_limit_key(client_id, window_name)
                 self.redis_client.delete(limit_key)
 
-            logger.info(f"Reset rate limit for client: {client_id}")
+            logger.info("Reset rate limit for client: {client_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to reset rate limit for {client_id}: {e}")
+            logger.error("Failed to reset rate limit for {client_id}: {e}")
             return False
 
 
@@ -320,12 +330,12 @@ class AbuseDetector:
                 token = auth_header.split(" ")[1]
                 payload = jwt.decode(token, options={"verify_signature": False})
                 if "user_id" in payload:
-                    return f"user:{payload['user_id']}"
+                    return "user:{payload['user_id']}"
             except:
                 pass
 
         # Fallback to IP address
-        return f"ip:{request.remote_addr}"
+        return "ip:{request.remote_addr}"
 
     def _get_request_data(self, request) -> str:
         """Extract request data for analysis."""
@@ -358,10 +368,10 @@ class AbuseDetector:
         try:
             self.abuse_scores[client_id] = 0.0
             self.blocked_clients.discard(client_id)
-            logger.info(f"Reset abuse score for client: {client_id}")
+            logger.info("Reset abuse score for client: {client_id}")
             return True
         except Exception as e:
-            logger.error(f"Failed to reset abuse score for {client_id}: {e}")
+            logger.error("Failed to reset abuse score for {client_id}: {e}")
             return False
 
     def block_client(self, client_id: str, duration: int = 3600) -> bool:
@@ -380,10 +390,10 @@ class AbuseDetector:
 
             threading.Thread(target=unblock_after_delay, daemon=True).start()
 
-            logger.info(f"Blocked client: {client_id} for {duration} seconds")
+            logger.info("Blocked client: {client_id} for {duration} seconds")
             return True
         except Exception as e:
-            logger.error(f"Failed to block client {client_id}: {e}")
+            logger.error("Failed to block client {client_id}: {e}")
             return False
 
 
@@ -403,7 +413,7 @@ class SecurityMiddleware:
         # Check for abuse
         is_abuse, abuse_info = self.abuse_detector.detect_abuse(request)
         if is_abuse:
-            logger.warning(f"Abuse detected: {abuse_info}")
+            logger.warning("Abuse detected: {abuse_info}")
             if abuse_info.get("blocked", False):
                 return (
                     jsonify(
@@ -419,7 +429,7 @@ class SecurityMiddleware:
         # Check rate limiting
         is_limited, limit_info = self.rate_limiter.is_rate_limited(request)
         if is_limited:
-            logger.warning(f"Rate limit exceeded: {limit_info}")
+            logger.warning("Rate limit exceeded: {limit_info}")
             return (
                 jsonify(
                     {
@@ -443,7 +453,7 @@ class SecurityMiddleware:
     def process_response(self, response) -> Any:
         """Process outgoing response for security headers."""
         # Add security headers
-        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Content-Type-Options"] = "nosnif"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = (

@@ -4,12 +4,27 @@ Memory Service for the Intelligent Research Assistant.
 This service handles conversation history and context management.
 """
 
+import hashlib
 import json
+import os
+import random
+import re
 import time
+import uuid
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 
 class MemoryService:
@@ -31,7 +46,7 @@ class MemoryService:
         self.session_timestamps = {}
 
         logger.info(
-            f"Memory Service initialized - Max history: {max_history_length}, Timeout: {session_timeout}s"
+            "Memory Service initialized - Max history: {max_history_length}, Timeout: {session_timeout}s"
         )
 
     def add_conversation_turn(
@@ -78,7 +93,7 @@ class MemoryService:
         # Update session timestamp
         self.session_timestamps[session_id] = current_time
 
-        logger.debug(f"Added conversation turn for session {session_id}")
+        logger.debug("Added conversation turn for session {session_id}")
 
     def get_conversation_history(self, session_id: str) -> List[Dict[str, Any]]:
         """
@@ -115,13 +130,13 @@ class MemoryService:
         context_parts.append("Previous conversation context:")
 
         for i, turn in enumerate(history[-3:], 1):  # Last 3 turns
-            context_parts.append(f"Turn {i}:")
-            context_parts.append(f"User: {turn['user_query']}")
-            context_parts.append(f"Assistant: {turn['assistant_response'][:200]}...")
+            context_parts.append("Turn {i}:")
+            context_parts.append("User: {turn['user_query']}")
+            context_parts.append("Assistant: {turn['assistant_response'][:200]}...")
             context_parts.append("")
 
         context_parts.append("Current query:")
-        context_parts.append(f"User: {current_query}")
+        context_parts.append("User: {current_query}")
         context_parts.append("")
 
         return "\n".join(context_parts)
@@ -139,7 +154,7 @@ class MemoryService:
         if session_id in self.conversations:
             del self.conversations[session_id]
             del self.session_timestamps[session_id]
-            logger.info(f"Cleared conversation history for session {session_id}")
+            logger.info("Cleared conversation history for session {session_id}")
             return True
         return False
 
@@ -191,7 +206,7 @@ class MemoryService:
         for session_id in expired_sessions:
             del self.conversations[session_id]
             del self.session_timestamps[session_id]
-            logger.info(f"Cleaned up expired session {session_id}")
+            logger.info("Cleaned up expired session {session_id}")
 
     def get_all_sessions(self) -> List[str]:
         """

@@ -2,16 +2,30 @@
 Model Registry for MLflow and W&B Integration.
 """
 
+import hashlib
 import json
 import os
+import random
+import re
 import time
+import uuid
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import mlflow
+import numpy as np
+import pandas as pd
+import requests
 import wandb
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
 from mlflow.tracking import MlflowClient
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 # Optional W&B import
 try:
@@ -55,7 +69,7 @@ class ModelRegistry:
         # Set up MLflow experiment
         mlflow.set_experiment(experiment_name)
 
-        logger.info(f"Model registry initialized with experiment: {experiment_name}")
+        logger.info("Model registry initialized with experiment: {experiment_name}")
 
     def register_model_mlflow(
         self,
@@ -74,7 +88,7 @@ class ModelRegistry:
         Returns:
             Model URI
         """
-        logger.info(f"Registering model in MLflow: {model_metadata.model_name}")
+        logger.info("Registering model in MLflow: {model_metadata.model_name}")
 
         # Start MLflow run
         with mlflow.start_run() as run:
@@ -113,12 +127,12 @@ class ModelRegistry:
             mlflow.set_tags(run_tags)
 
             # Register model
-            model_uri = f"runs:/{run.info.run_id}/model"
+            model_uri = "runs:/{run.info.run_id}/model"
             registered_model = mlflow.register_model(
                 model_uri=model_uri, name=model_metadata.model_name
             )
 
-            logger.info(f"Model registered successfully: {registered_model.name}")
+            logger.info("Model registered successfully: {registered_model.name}")
             return registered_model.name
 
     def register_model_wandb(
@@ -138,12 +152,12 @@ class ModelRegistry:
         Returns:
             Model artifact ID
         """
-        logger.info(f"Registering model in W&B: {model_metadata.model_name}")
+        logger.info("Registering model in W&B: {model_metadata.model_name}")
 
         # Initialize W&B
         wandb.init(
             project=project_name,
-            name=f"finetune-{model_metadata.model_name}",
+            name="finetune-{model_metadata.model_name}",
             config=model_metadata.training_config,
             tags=[model_metadata.model_size, "lora", "finetuning"],
         )
@@ -155,7 +169,7 @@ class ModelRegistry:
         model_artifact = wandb.Artifact(
             name=model_metadata.model_name,
             type="model",
-            description=f"Fine-tuned {model_metadata.base_model} with LoRA",
+            description="Fine-tuned {model_metadata.base_model} with LoRA",
         )
 
         model_artifact.add_dir(model_path)
@@ -175,9 +189,7 @@ class ModelRegistry:
         # Finish W&B run
         wandb.finish()
 
-        logger.info(
-            f"Model registered successfully in W&B: {model_metadata.model_name}"
-        )
+        logger.info("Model registered successfully in W&B: {model_metadata.model_name}")
         return model_metadata.model_name
 
     def list_registered_models(
@@ -197,7 +209,7 @@ class ModelRegistry:
         elif registry_type == "wandb":
             return self._list_wandb_models()
         else:
-            raise ValueError(f"Unsupported registry type: {registry_type}")
+            raise ValueError("Unsupported registry type: {registry_type}")
 
     def _list_mlflow_models(self) -> List[Dict[str, Any]]:
         """List models registered in MLflow."""
@@ -223,7 +235,7 @@ class ModelRegistry:
                 models.append(model_info)
 
         except Exception as e:
-            logger.error(f"Error listing MLflow models: {e}")
+            logger.error("Error listing MLflow models: {e}")
 
         return models
 
@@ -238,7 +250,7 @@ class ModelRegistry:
             models = []
 
         except Exception as e:
-            logger.error(f"Error listing W&B models: {e}")
+            logger.error("Error listing W&B models: {e}")
 
         return models
 
@@ -264,7 +276,7 @@ class ModelRegistry:
         elif registry_type == "wandb":
             return self._get_wandb_model_version(model_name, version)
         else:
-            raise ValueError(f"Unsupported registry type: {registry_type}")
+            raise ValueError("Unsupported registry type: {registry_type}")
 
     def _get_mlflow_model_version(
         self, model_name: str, version: Optional[str] = None
@@ -275,7 +287,7 @@ class ModelRegistry:
                 # Get latest version
                 versions = self.mlflow_client.get_latest_versions(model_name)
                 if not versions:
-                    raise ValueError(f"No versions found for model: {model_name}")
+                    raise ValueError("No versions found for model: {model_name}")
                 model_version = versions[0]
             else:
                 model_version = self.mlflow_client.get_model_version(
@@ -301,7 +313,7 @@ class ModelRegistry:
             return version_info
 
         except Exception as e:
-            logger.error(f"Error getting MLflow model version: {e}")
+            logger.error("Error getting MLflow model version: {e}")
             return {}
 
     def _get_wandb_model_version(
@@ -314,7 +326,7 @@ class ModelRegistry:
             return {}
 
         except Exception as e:
-            logger.error(f"Error getting W&B model version: {e}")
+            logger.error("Error getting W&B model version: {e}")
             return {}
 
     def transition_model_stage(
@@ -337,7 +349,7 @@ class ModelRegistry:
         elif registry_type == "wandb":
             return self._transition_wandb_model_stage(model_name, version, stage)
         else:
-            raise ValueError(f"Unsupported registry type: {registry_type}")
+            raise ValueError("Unsupported registry type: {registry_type}")
 
     def _transition_mlflow_model_stage(
         self, model_name: str, version: str, stage: str
@@ -347,11 +359,11 @@ class ModelRegistry:
             self.mlflow_client.transition_model_version_stage(
                 name=model_name, version=version, stage=stage
             )
-            logger.info(f"Model {model_name} version {version} transitioned to {stage}")
+            logger.info("Model {model_name} version {version} transitioned to {stage}")
             return True
 
         except Exception as e:
-            logger.error(f"Error transitioning MLflow model stage: {e}")
+            logger.error("Error transitioning MLflow model stage: {e}")
             return False
 
     def _transition_wandb_model_stage(
@@ -364,7 +376,7 @@ class ModelRegistry:
             return False
 
         except Exception as e:
-            logger.error(f"Error transitioning W&B model stage: {e}")
+            logger.error("Error transitioning W&B model stage: {e}")
             return False
 
     def delete_model(self, model_name: str, registry_type: str = "mlflow") -> bool:
@@ -383,17 +395,17 @@ class ModelRegistry:
         elif registry_type == "wandb":
             return self._delete_wandb_model(model_name)
         else:
-            raise ValueError(f"Unsupported registry type: {registry_type}")
+            raise ValueError("Unsupported registry type: {registry_type}")
 
     def _delete_mlflow_model(self, model_name: str) -> bool:
         """Delete MLflow model."""
         try:
             self.mlflow_client.delete_registered_model(model_name)
-            logger.info(f"MLflow model {model_name} deleted successfully")
+            logger.info("MLflow model {model_name} deleted successfully")
             return True
 
         except Exception as e:
-            logger.error(f"Error deleting MLflow model: {e}")
+            logger.error("Error deleting MLflow model: {e}")
             return False
 
     def _delete_wandb_model(self, model_name: str) -> bool:
@@ -404,7 +416,7 @@ class ModelRegistry:
             return False
 
         except Exception as e:
-            logger.error(f"Error deleting W&B model: {e}")
+            logger.error("Error deleting W&B model: {e}")
             return False
 
     def create_model_card(self, model_metadata: ModelMetadata, output_path: str) -> str:
@@ -418,7 +430,7 @@ class ModelRegistry:
         Returns:
             Path to the created model card
         """
-        model_card = f"""# Model Card: {model_metadata.model_name}
+        model_card = """# Model Card: {model_metadata.model_name}
 
 ## Model Information
 - **Model Name**: {model_metadata.model_name}
@@ -479,7 +491,7 @@ If you use this model, please cite:
         with open(output_path, "w") as f:
             f.write(model_card)
 
-        logger.info(f"Model card created: {output_path}")
+        logger.info("Model card created: {output_path}")
         return output_path
 
     def export_model_metadata(
@@ -519,7 +531,7 @@ If you use this model, please cite:
         with open(output_path, "w") as f:
             json.dump(metadata_dict, f, indent=2)
 
-        logger.info(f"Model metadata exported: {output_path}")
+        logger.info("Model metadata exported: {output_path}")
         return output_path
 
     def log_metrics_wandb(self, metrics: Dict[str, Any], step: int = 0) -> None:
@@ -530,9 +542,9 @@ If you use this model, please cite:
 
         try:
             wandb.log(metrics, step=step)
-            logger.info(f"Logged {len(metrics)} metrics to W&B")
+            logger.info("Logged {len(metrics)} metrics to W&B")
         except Exception as e:
-            logger.error(f"Error logging to W&B: {e}")
+            logger.error("Error logging to W&B: {e}")
 
     def log_model_version_wandb(
         self, model_path: str, model_metadata: ModelMetadata
@@ -545,9 +557,9 @@ If you use this model, please cite:
         try:
             # Create model artifact
             artifact = wandb.Artifact(
-                name=f"{model_metadata.model_name}-v{model_metadata.version}",
+                name="{model_metadata.model_name}-v{model_metadata.version}",
                 type="model",
-                description=f"Fine-tuned model: {model_metadata.model_name}",
+                description="Fine-tuned model: {model_metadata.model_name}",
             )
 
             # Add model files
@@ -568,9 +580,9 @@ If you use this model, please cite:
             # Log the artifact
             wandb.log_artifact(artifact)
 
-            logger.info(f"Logged model version to W&B: {artifact.name}")
+            logger.info("Logged model version to W&B: {artifact.name}")
             return artifact.name
 
         except Exception as e:
-            logger.error(f"Error logging model to W&B: {e}")
+            logger.error("Error logging model to W&B: {e}")
             return ""

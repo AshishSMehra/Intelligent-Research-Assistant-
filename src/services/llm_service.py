@@ -5,12 +5,24 @@ This service handles interactions with language models for answer generation.
 Supports multiple LLM providers: OpenAI, Ollama, Hugging Face, and fallback.
 """
 
+import hashlib
+import json
 import os
 import random
 import time
-from typing import Any, Dict, List, Optional
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
 # Try to import different LLM libraries
 try:
@@ -76,7 +88,7 @@ class LLMService:
         ]
 
         logger.info(
-            f"LLM Service initialized with provider: {self.provider}, model: {self.model_name}"
+            "LLM Service initialized with provider: {self.provider}, model: {self.model_name}"
         )
 
     def _initialize_provider(self):
@@ -86,13 +98,13 @@ class LLMService:
             if OPENAI_AVAILABLE and self.api_key:
                 self.provider = "openai"
                 openai.api_key = self.api_key
-                logger.info(f"Using OpenAI with model: {self.model_name}")
+                logger.info("Using OpenAI with model: {self.model_name}")
             elif self._check_ollama_available():
                 self.provider = "ollama"
-                logger.info(f"Using Ollama with model: {self.model_name}")
+                logger.info("Using Ollama with model: {self.model_name}")
             elif HUGGINGFACE_AVAILABLE:
                 self.provider = "huggingface"
-                logger.info(f"Using Hugging Face with model: {self.model_name}")
+                logger.info("Using Hugging Face with model: {self.model_name}")
             else:
                 self.provider = "fallback"
                 logger.info("Using fallback response generation")
@@ -178,7 +190,7 @@ class LLMService:
             }
 
         except Exception as e:
-            logger.error(f"Error generating answer: {e}")
+            logger.error("Error generating answer: {e}")
             processing_time = time.time() - start_time
 
             return {
@@ -215,12 +227,12 @@ Context:
         for i, chunk in enumerate(context_chunks, 1):
             source_name = chunk.get("document_id", "Unknown")
             page_numbers = chunk.get("source_pages", [])
-            page_str = f"Page {page_numbers[0]}" if page_numbers else "Unknown page"
+            page_str = "Page {page_numbers[0]}" if page_numbers else "Unknown page"
             text = chunk.get("text", "")
 
-            prompt += f"{i}. {text} (Source: {source_name}, {page_str})\n"
+            prompt += "{i}. {text} (Source: {source_name}, {page_str})\n"
 
-        prompt += f"\nQuestion: {query}\n\nAnswer:"
+        prompt += "\nQuestion: {query}\n\nAnswer:"
 
         return prompt
 
@@ -243,6 +255,8 @@ Context:
             )
 
             answer = response.choices[0].message.content.strip()
+
+            # Extract citations from the response
             citations = self._extract_citations(answer, prompt)
 
             return {
@@ -254,7 +268,7 @@ Context:
             }
 
         except Exception as e:
-            logger.error(f"OpenAI API error: {e}")
+            logger.error("OpenAI API error: {e}")
             raise
 
     async def _call_ollama(
@@ -276,6 +290,8 @@ Context:
             if response.status_code == 200:
                 result = response.json()
                 answer = result.get("response", "").strip()
+
+                # Extract citations from the response
                 citations = self._extract_citations(answer, prompt)
 
                 return {
@@ -284,10 +300,10 @@ Context:
                     "tokens_used": result.get("eval_count", 0),
                 }
             else:
-                raise Exception(f"Ollama API error: {response.status_code}")
+                raise Exception("Ollama API error: {response.status_code}")
 
         except Exception as e:
-            logger.error(f"Ollama API error: {e}")
+            logger.error("Ollama API error: {e}")
             raise
 
     async def _call_huggingface(
@@ -321,6 +337,7 @@ Context:
             response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
             answer = response_text[len(prompt) :].strip()
 
+            # Extract citations from the response
             citations = self._extract_citations(answer, prompt)
 
             return {
@@ -330,7 +347,7 @@ Context:
             }
 
         except Exception as e:
-            logger.error(f"Hugging Face error: {e}")
+            logger.error("Hugging Face error: {e}")
             raise
 
     def _generate_fallback_response(
@@ -393,11 +410,11 @@ Context:
         Returns:
             List of citations
         """
-        citations = []
 
         # Simple citation extraction - look for [source, page] patterns
         import re
 
+        citations = []
         citation_pattern = r"\[([^,]+),\s*page\s*(\d+)\]"
         matches = re.findall(citation_pattern, answer, re.IGNORECASE)
 
@@ -406,7 +423,7 @@ Context:
                 {
                     "source": source.strip(),
                     "page": int(page),
-                    "text": f"Cited in answer: {source}, page {page}",
+                    "text": "Cited in answer: {source}, page {page}",
                 }
             )
 

@@ -1,9 +1,23 @@
+import asyncio
+import hashlib
 import os
+import random
+import time
 import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
 import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
 from flasgger import Swagger
 from flask import Flask, jsonify, make_response, request
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 from logging_config import logger
 
@@ -17,7 +31,6 @@ from src.pipeline.pipeline import (
     delete_document,
     extract_text_from_pdf,
     generate_embeddings,
-    generate_embeddings_with_metadata,
     get_collection_info,
     get_collection_stats,
     get_model_info,
@@ -60,7 +73,10 @@ def read_root():
     """
     return jsonify(
         {
-            "message": "Welcome to the File Upload API. Use the /upload endpoint to upload files."
+            "message": (
+                "Welcome to the File Upload API. "
+                "Use the /upload endpoint to upload files."
+            )
         }
     )
 
@@ -191,7 +207,7 @@ def search():
         )
 
     except Exception as e:
-        logger.error(f"Search endpoint error: {e}")
+        logger.error("Search endpoint error: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -227,7 +243,7 @@ def get_document(document_id):
         if not results:
             return (
                 jsonify(
-                    {"status": "error", "error": f"Document {document_id} not found"}
+                    {"status": "error", "error": "Document {document_id} not found"}
                 ),
                 404,
             )
@@ -242,7 +258,7 @@ def get_document(document_id):
         )
 
     except Exception as e:
-        logger.error(f"Get document endpoint error: {e}")
+        logger.error("Get document endpoint error: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -273,7 +289,7 @@ def delete_document_endpoint(document_id):
             return jsonify(
                 {
                     "status": "success",
-                    "message": f"Document {document_id} deleted successfully",
+                    "message": "Document {document_id} deleted successfully",
                 }
             )
         else:
@@ -281,14 +297,14 @@ def delete_document_endpoint(document_id):
                 jsonify(
                     {
                         "status": "error",
-                        "error": f"Failed to delete document {document_id}",
+                        "error": "Failed to delete document {document_id}",
                     }
                 ),
                 500,
             )
 
     except Exception as e:
-        logger.error(f"Delete document endpoint error: {e}")
+        logger.error("Delete document endpoint error: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -313,7 +329,7 @@ def get_agents_status():
         metrics = agent_orchestrator.get_agent_metrics()
         return jsonify({"status": "success", "agents": metrics})
     except Exception as e:
-        logger.error(f"Error getting agents status: {e}")
+        logger.error("Error getting agents status: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -341,7 +357,7 @@ def get_agent_details(agent_type):
         if agent_type not in agent_orchestrator.agents:
             return (
                 jsonify(
-                    {"status": "error", "error": f"Agent type '{agent_type}' not found"}
+                    {"status": "error", "error": "Agent type '{agent_type}' not found"}
                 ),
                 404,
             )
@@ -353,7 +369,7 @@ def get_agent_details(agent_type):
             {"status": "success", "agent_type": agent_type, "details": details}
         )
     except Exception as e:
-        logger.error(f"Error getting agent details: {e}")
+        logger.error("Error getting agent details: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -380,11 +396,11 @@ def activate_agent(agent_type):
         return jsonify(
             {
                 "status": "success",
-                "message": f"Agent {agent_type} activated successfully",
+                "message": "Agent {agent_type} activated successfully",
             }
         )
     except Exception as e:
-        logger.error(f"Error activating agent: {e}")
+        logger.error("Error activating agent: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -411,11 +427,11 @@ def deactivate_agent(agent_type):
         return jsonify(
             {
                 "status": "success",
-                "message": f"Agent {agent_type} deactivated successfully",
+                "message": "Agent {agent_type} deactivated successfully",
             }
         )
     except Exception as e:
-        logger.error(f"Error deactivating agent: {e}")
+        logger.error("Error deactivating agent: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -437,7 +453,7 @@ def reset_all_agents():
             {"status": "success", "message": "All agents reset successfully"}
         )
     except Exception as e:
-        logger.error(f"Error resetting agents: {e}")
+        logger.error("Error resetting agents: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -466,7 +482,7 @@ def get_workflow_history():
             {"status": "success", "workflows": history, "total_workflows": len(history)}
         )
     except Exception as e:
-        logger.error(f"Error getting workflow history: {e}")
+        logger.error("Error getting workflow history: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -496,14 +512,14 @@ def get_workflow_details(workflow_id):
         if not workflow:
             return (
                 jsonify(
-                    {"status": "error", "error": f"Workflow '{workflow_id}' not found"}
+                    {"status": "error", "error": "Workflow '{workflow_id}' not found"}
                 ),
                 404,
             )
 
         return jsonify({"status": "success", "workflow": workflow})
     except Exception as e:
-        logger.error(f"Error getting workflow details: {e}")
+        logger.error("Error getting workflow details: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -524,7 +540,7 @@ def get_agent_capabilities():
 
         return jsonify({"status": "success", "capabilities": capabilities})
     except Exception as e:
-        logger.error(f"Error getting agent capabilities: {e}")
+        logger.error("Error getting agent capabilities: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -563,19 +579,17 @@ def chat_endpoint():
             return jsonify({"status": "error", "error": "Query is required"}), 400
 
         query = data["query"]
-        context = data.get("context", {})
 
-        logger.info(f"Processing chat query: {query[:50]}...")
+        logger.info("Processing chat query: {query[:50]}...")
 
         # Execute workflow using multi-agent system (synchronous wrapper)
-        import asyncio
 
-        result = asyncio.run(agent_orchestrator.execute_workflow(query, context))
+        result = asyncio.run(agent_orchestrator.execute_workflow(query, {}))
 
         return jsonify({"status": "success", "result": result})
 
     except Exception as e:
-        logger.error(f"Error processing chat query: {e}")
+        logger.error("Error processing chat query: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -607,17 +621,16 @@ def test_workflow():
                 400,
             )
 
-        logger.info(f"Testing workflow with query: {query}")
+        logger.info("Testing workflow with query: {query}")
 
         # Execute workflow using multi-agent system (synchronous wrapper)
-        import asyncio
 
         result = asyncio.run(agent_orchestrator.execute_workflow(query))
 
         return jsonify({"status": "success", "test_result": result})
 
     except Exception as e:
-        logger.error(f"Error testing workflow: {e}")
+        logger.error("Error testing workflow: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -648,7 +661,7 @@ def admin_health_check():
         return jsonify(health_status)
 
     except Exception as e:
-        logger.error(f"Admin health check failed: {e}")
+        logger.error("Admin health check failed: {e}")
         return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 
@@ -691,7 +704,8 @@ def upload():
         file = request.files.get("file")
         if not file:
             return make_response(
-                jsonify({"detail": "No file part in multipart/form-data request."}), 400
+                jsonify({"detail": "No file part in multipart/form-data request."}),
+                400,
             )
         filename = file.filename
         file_path = os.path.join(UPLOADS_DIR, filename)
@@ -703,27 +717,31 @@ def upload():
             url = data.get("url")
         if not url:
             return make_response(
-                jsonify({"detail": "No URL provided in JSON body."}), 400
+                jsonify({"detail": "No URL provided in JSON body."}),
+                400,
             )
         try:
             response = requests.get(url, stream=True)
             response.raise_for_status()
-            filename = url.split("/")[-1] or f"{uuid.uuid4()}.pdf"
+            filename = url.split("/")[-1] or "{uuid.uuid4()}.pdf"
             file_path = os.path.join(UPLOADS_DIR, filename)
             with open(file_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to download file from URL {url}. Error: {e}")
+            logger.error("Failed to download file from URL {url}. Error: {e}")
             return make_response(
-                jsonify({"detail": f"Failed to download file from URL. {e}"}), 500
+                jsonify({"detail": "Failed to download file from URL. {e}"}), 500
             )
 
     if not file_path:
         return make_response(
             jsonify(
                 {
-                    "detail": "Please provide a file (multipart/form-data) or a URL (application/json)."
+                    "detail": (
+                        "Please provide a file (multipart/form-data) or "
+                        "a URL (application/json)."
+                    )
                 }
             ),
             400,
@@ -731,7 +749,7 @@ def upload():
 
     # --- Start Enhanced Ingestion Pipeline ---
     try:
-        logger.info(f"Starting enhanced ingestion for {filename}...")
+        logger.info("Starting enhanced ingestion for {filename}...")
         document_id = str(uuid.uuid4())
 
         # Use enhanced processing with page structure preservation
@@ -739,7 +757,7 @@ def upload():
 
         if not success:
             logger.warning(
-                f"Enhanced processing failed for {filename}, falling back to basic processing..."
+                "Enhanced processing failed for {filename}, falling back to basic processing..."
             )
 
             # Fallback to basic processing
@@ -747,7 +765,7 @@ def upload():
             text = extract_text_from_pdf(file_path)
             if not text:
                 return make_response(
-                    jsonify({"detail": f"Could not extract text from {filename}."}), 500
+                    jsonify({"detail": "Could not extract text from {filename}."}), 500
                 )
 
             # 2. Chunk Text
@@ -759,17 +777,20 @@ def upload():
             # 4. Store in Vector DB
             store_embeddings(embeddings, chunks, document_id)
 
-        logger.info(f"Successfully completed ingestion for document_id: {document_id}")
+        logger.info("Successfully completed ingestion for document_id: {document_id}")
         return jsonify(
             {
-                "message": f"File '{filename}' processed successfully with page structure preservation.",
+                "message": (
+                    "File '{filename}' processed successfully with "
+                    "page structure preservation."
+                ),
                 "document_id": document_id,
             }
         )
 
     except Exception as e:
         logger.error(
-            f"An error occurred during the ingestion pipeline for {filename}. Error: {e}"
+            "An error occurred during the ingestion pipeline for {filename}. Error: {e}"
         )
         return make_response(
             jsonify({"detail": "An error occurred during processing."}), 500

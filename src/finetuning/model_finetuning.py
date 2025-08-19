@@ -2,15 +2,26 @@
 Model Fine-tuning with LoRA/QLoRA and GPU Optimization.
 """
 
+import hashlib
 import json
 import os
+import random
+import re
 import time
+import uuid
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import bitsandbytes as bnb
+import numpy as np
+import pandas as pd
+import requests
 import torch
+from botocore.exceptions import NoCredentialsError
 from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
 from peft import (
     LoraConfig,
@@ -19,6 +30,7 @@ from peft import (
     get_peft_model,
     prepare_model_for_kbit_training,
 )
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -69,7 +81,7 @@ class ModelFineTuning:
         self.tokenizer = None
         self.trainer = None
 
-        logger.info(f"Model fine-tuning initialized with device: {self.device}")
+        logger.info("Model fine-tuning initialized with device: {self.device}")
 
     def prepare_model_and_tokenizer(
         self, model_name: str, use_qlora: bool = False, load_in_4bit: bool = True
@@ -82,7 +94,7 @@ class ModelFineTuning:
             use_qlora: Whether to use QLoRA (4-bit quantization)
             load_in_4bit: Whether to load model in 4-bit precision
         """
-        logger.info(f"Loading model: {model_name}")
+        logger.info("Loading model: {model_name}")
 
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -118,7 +130,7 @@ class ModelFineTuning:
                     self.model = prepare_model_for_kbit_training(self.model)
                 except Exception as e:
                     logger.warning(
-                        f"4-bit quantization failed, falling back to regular loading: {e}"
+                        "4-bit quantization failed, falling back to regular loading: {e}"
                     )
                     # Fallback to regular loading
                     self.model = AutoModelForCausalLM.from_pretrained(
@@ -152,7 +164,7 @@ class ModelFineTuning:
         if self.device.type != "cuda" or self.model.device.type == "cpu":
             self.model = self.model.to(self.device)
 
-        logger.info(f"Model loaded successfully on {self.model.device}")
+        logger.info("Model loaded successfully on {self.model.device}")
 
     def apply_lora_config(self, lora_config: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -164,7 +176,7 @@ class ModelFineTuning:
         if lora_config is None:
             lora_config = self.gpu_config.get_lora_config()
 
-        logger.info(f"Applying LoRA configuration: {lora_config}")
+        logger.info("Applying LoRA configuration: {lora_config}")
 
         # Determine target modules based on model architecture
         model_name_lower = self.model.config.model_type.lower()
@@ -225,7 +237,7 @@ class ModelFineTuning:
                 examples["instruction"], examples["input"], examples["output"]
             ):
                 # Format: instruction + input + output
-                full_text = f"### Instruction:\n{instruction}\n\n### Input:\n{input_text}\n\n### Response:\n{output}"
+                full_text = "### Instruction:\n{instruction}\n\n### Input:\n{input_text}\n\n### Response:\n{output}"
                 texts.append(full_text)
 
             # Tokenize
@@ -249,7 +261,7 @@ class ModelFineTuning:
                 tokenize_function, batched=True, remove_columns=dataset.column_names
             )
 
-        logger.info(f"Dataset tokenized with max_length={max_length}")
+        logger.info("Dataset tokenized with max_length={max_length}")
         return DatasetDict(tokenized_datasets)
 
     def create_trainer(
@@ -296,7 +308,7 @@ class ModelFineTuning:
             bf16=self.gpu_config.optimization_config["bf16"],
             gradient_checkpointing=True,
             report_to=["wandb"] if os.getenv("WANDB_API_KEY") else None,
-            run_name=f"finetune-{training_config.model_name.split('/')[-1]}",
+            run_name="finetune-{training_config.model_name.split('/')[-1]}",
         )
 
         # Data collator
@@ -375,7 +387,7 @@ class ModelFineTuning:
         with open(results_path, "w") as f:
             json.dump(results, f, indent=2)
 
-        logger.info(f"Training completed. Results saved to {results_path}")
+        logger.info("Training completed. Results saved to {results_path}")
         return results
 
     def _load_dataset(self, dataset_path: str) -> DatasetDict:
@@ -386,7 +398,7 @@ class ModelFineTuning:
             # Load from JSON files
             dataset_dict = DatasetDict()
             for split in ["train", "validation", "test"]:
-                split_path = os.path.join(dataset_path, f"{split}.json")
+                split_path = os.path.join(dataset_path, "{split}.json")
                 if os.path.exists(split_path):
                     with open(split_path, "r") as f:
                         data = json.load(f)
@@ -423,7 +435,7 @@ class ModelFineTuning:
         model.save_pretrained(output_path)
         self.tokenizer.save_pretrained(output_path)
 
-        logger.info(f"Merged model saved to {output_path}")
+        logger.info("Merged model saved to {output_path}")
 
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the current model."""

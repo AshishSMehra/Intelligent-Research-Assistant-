@@ -2,10 +2,27 @@
 Reasoner Agent for validation and follow-up requests.
 """
 
+import hashlib
+import json
+import os
+import random
+import re
 import time
-from typing import Any, Dict, List
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 from ..services.llm_service import LLMService
 from .base_agent import AgentResult, AgentTask, BaseAgent
@@ -52,7 +69,7 @@ class ReasonerAgent(BaseAgent):
         }
 
         logger.info(
-            f"Reasoner Agent {agent_id} initialized with {len(self.analysis_methods)} analysis methods"
+            "Reasoner Agent {agent_id} initialized with {len(self.analysis_methods)} analysis methods"
         )
 
     async def execute_task(self, task: AgentTask) -> AgentResult:
@@ -81,7 +98,7 @@ class ReasonerAgent(BaseAgent):
             elif task_type == "validation":
                 result_data = await self._validate_content(task)
             else:
-                raise ValueError(f"Unknown task type: {task_type}")
+                raise ValueError("Unknown task type: {task_type}")
 
             execution_time = time.time() - start_time
             result = AgentResult(
@@ -104,7 +121,7 @@ class ReasonerAgent(BaseAgent):
                 execution_time=execution_time,
                 metadata={"task_type": task.task_type},
             )
-            logger.error(f"Reasoner Agent error: {e}")
+            logger.error("Reasoner Agent error: {e}")
 
         self._log_task_complete(task, result)
         self._update_metrics(result)
@@ -122,7 +139,6 @@ class ReasonerAgent(BaseAgent):
         Returns:
             Dict containing comprehensive analysis results
         """
-        content = task.parameters.get("content", "")
         analysis_type = task.parameters.get("analysis_type", "comprehensive")
         include_sentiment = task.parameters.get("include_sentiment", True)
 
@@ -179,7 +195,6 @@ class ReasonerAgent(BaseAgent):
         Returns:
             Dict containing text analysis results
         """
-        content = task.parameters.get("content", "")
 
         analysis = {
             "word_count": len(content.split()),
@@ -204,7 +219,6 @@ class ReasonerAgent(BaseAgent):
         Returns:
             Dict containing data analysis results
         """
-        data = task.parameters.get("data", {})
 
         analysis = {
             "data_type": type(data).__name__,
@@ -225,7 +239,6 @@ class ReasonerAgent(BaseAgent):
         Returns:
             Dict containing sentiment analysis results
         """
-        content = task.parameters.get("content", "")
 
         # Simple sentiment analysis (placeholder)
         # In production, use proper sentiment analysis libraries
@@ -272,7 +285,6 @@ class ReasonerAgent(BaseAgent):
         Returns:
             Dict containing fact checking results
         """
-        content = task.parameters.get("content", "")
 
         # Placeholder fact checking
         # In production, integrate with fact-checking APIs or databases
@@ -296,7 +308,6 @@ class ReasonerAgent(BaseAgent):
         Returns:
             Dict containing consistency check results
         """
-        content = task.parameters.get("content", "")
 
         # Simple consistency check
         sentences = [s.strip() for s in content.split(".") if s.strip()]
@@ -324,7 +335,6 @@ class ReasonerAgent(BaseAgent):
         Returns:
             Dict containing quality assessment results
         """
-        content = task.parameters.get("content", "")
 
         # Quality metrics
         word_count = len(content.split())
@@ -358,12 +368,10 @@ class ReasonerAgent(BaseAgent):
         """
         research_results = task.parameters.get("research_results", {})
         response_type = task.parameters.get("response_type", "comprehensive")
-        include_citations = task.parameters.get("include_citations", True)
         max_length = task.parameters.get("max_length", 500)
 
         # Extract content from research results
         content_pieces = []
-        citations = []
 
         if "results" in research_results:
             for i, result in enumerate(
@@ -373,14 +381,14 @@ class ReasonerAgent(BaseAgent):
                 if include_citations:
                     citations.append(
                         {
-                            "source": result.get("document_id", f"source_{i}"),
+                            "source": result.get("document_id", "source_{i}"),
                             "content": result.get("content", "")[:100] + "...",
                         }
                     )
 
         # Generate response using LLM
         context_chunks = [
-            {"text": content, "document_id": f"chunk_{i}"}
+            {"text": content, "document_id": "chunk_{i}"}
             for i, content in enumerate(content_pieces)
         ]
 
@@ -416,7 +424,6 @@ class ReasonerAgent(BaseAgent):
 
     async def _generate_summary(self, task: AgentTask) -> Dict[str, Any]:
         """Generate summary content."""
-        content = task.parameters.get("content", "")
 
         # Simple summary generation
         sentences = [s.strip() for s in content.split(".") if s.strip()]
@@ -439,7 +446,6 @@ class ReasonerAgent(BaseAgent):
         Returns:
             Dict containing validation results
         """
-        content = task.parameters.get("content", "")
         validation_type = task.parameters.get("validation_type", "fact_checking")
 
         validation_results = {
@@ -519,7 +525,7 @@ class ReasonerAgent(BaseAgent):
             "at",
             "to",
             "for",
-            "of",
+            "o",
             "with",
             "by",
         ]
@@ -566,9 +572,7 @@ class ReasonerAgent(BaseAgent):
         # Extract key findings
         for analysis_type, result in results.items():
             if "score" in result:
-                summary["key_findings"].append(
-                    f"{analysis_type}: {result['score']:.2f}"
-                )
+                summary["key_findings"].append("{analysis_type}: {result['score']:.2f}")
 
         return summary
 

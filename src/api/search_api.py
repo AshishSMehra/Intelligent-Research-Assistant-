@@ -2,10 +2,28 @@
 Search API endpoints for the Intelligent Research Assistant.
 """
 
-from typing import Any, Dict, List
+import hashlib
+import json
+import os
+import random
+import re
+import time
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
 from fastapi import APIRouter, HTTPException, Query
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 from ..models.search import SearchQuery, SearchResult
 from ..services.search_service import SearchService
@@ -29,7 +47,7 @@ async def search_endpoint(search_query: SearchQuery):
         List of search results
     """
     try:
-        logger.info(f"Received search query: {search_query.query[:50]}...")
+        logger.info("Received search query: {search_query.query[:50]}...")
 
         results = await search_service.semantic_search(
             query=search_query.query,
@@ -37,12 +55,12 @@ async def search_endpoint(search_query: SearchQuery):
             score_threshold=search_query.score_threshold,
         )
 
-        logger.info(f"Found {len(results)} search results")
+        logger.info("Found {len(results)} search results")
         return results
 
     except Exception as e:
-        logger.error(f"Error in search: {e}")
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+        logger.error("Error in search: {e}")
+        raise HTTPException(status_code=500, detail="Search failed: {str(e)}")
 
 
 @search_router.get("/documents/{document_id}")
@@ -72,9 +90,9 @@ async def get_document_chunks(
         }
 
     except Exception as e:
-        logger.error(f"Error getting document chunks: {e}")
+        logger.error("Error getting document chunks: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to get document chunks: {str(e)}"
+            status_code=500, detail="Failed to get document chunks: {str(e)}"
         )
 
 
@@ -91,7 +109,7 @@ async def get_search_stats():
         return stats
 
     except Exception as e:
-        logger.error(f"Error getting search stats: {e}")
+        logger.error("Error getting search stats: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to get search stats: {str(e)}"
+            status_code=500, detail="Failed to get search stats: {str(e)}"
         )

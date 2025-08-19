@@ -2,10 +2,27 @@
 Chat service for handling user queries and generating responses.
 """
 
+import hashlib
+import json
+import os
+import random
+import re
 import time
-from typing import Any, Dict, List, Optional
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 from ..models.chat import ChatMetadata, ChatQuery, ChatResponse
 from ..models.search import SearchResult
@@ -48,7 +65,6 @@ class ChatService:
             ChatResponse: Generated response with sources and citations
         """
         start_time = time.time()
-        request_id = None
 
         try:
             # Step 1: Log request and get session info
@@ -59,16 +75,16 @@ class ChatService:
             )
             user_id = chat_query.metadata.user_id if chat_query.metadata else None
 
-            request_id = self.metrics_service.log_request(
+            # Log request
+            self.metrics_service.log_request(
                 endpoint="/chat", method="POST", user_id=user_id
             )
 
-            logger.info(f"Processing chat query: {chat_query.query[:50]}...")
+            logger.info("Processing chat query: {chat_query.query[:50]}...")
 
             # Step 2: Get conversation context (Step 7: Short-term memory)
-            conversation_context = ""
             if session_id and session_id != "default_session":
-                conversation_context = self.memory_service.get_context_for_query(
+                conversation_context = self.memory_service.get_conversation_context(
                     session_id, chat_query.query
                 )
 
@@ -100,7 +116,6 @@ class ChatService:
 
             # Step 5: Prepare sources and citations
             sources = self._prepare_sources(search_results, chat_query.include_sources)
-            citations = llm_response.get("citations", [])
 
             # Step 6: Add to conversation memory (Step 7: Memory)
             if session_id and session_id != "default_session":
@@ -153,7 +168,7 @@ class ChatService:
                 endpoint="/chat", error_type="processing_error", error_message=str(e)
             )
 
-            logger.error(f"Error processing chat query: {e}")
+            logger.error("Error processing chat query: {e}")
 
             return ChatResponse(
                 query=chat_query.query,
@@ -184,11 +199,11 @@ class ChatService:
                 query=chat_query.query, limit=chat_query.max_results, filters=filters
             )
 
-            logger.info(f"Found {len(search_results)} relevant documents")
+            logger.info("Found {len(search_results)} relevant documents")
             return search_results
 
         except Exception as e:
-            logger.error(f"Error searching documents: {e}")
+            logger.error("Error searching documents: {e}")
             return []
 
     async def _generate_response_with_llm(
@@ -239,7 +254,7 @@ class ChatService:
             return llm_response
 
         except Exception as e:
-            logger.error(f"Error generating LLM response: {e}")
+            logger.error("Error generating LLM response: {e}")
             return {
                 "answer": "I couldn't generate a proper response. Please try again.",
                 "citations": [],

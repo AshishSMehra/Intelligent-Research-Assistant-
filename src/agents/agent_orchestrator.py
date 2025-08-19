@@ -2,11 +2,26 @@
 Agent Orchestrator for coordinating multi-agent operations.
 """
 
-import asyncio
+import hashlib
+import json
+import os
+import random
 import time
-from typing import Any, Dict, List, Optional
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 from .base_agent import AgentResult, AgentTask, BaseAgent
 from .executor_agent import ExecutorAgent
@@ -36,7 +51,7 @@ class AgentOrchestrator:
         self.agents["reasoner"] = ReasonerAgent("reasoner_001")
         self.agents["executor"] = ExecutorAgent("executor_001")
 
-        logger.info(f"Initialized {len(self.agents)} agents")
+        logger.info("Initialized {len(self.agents)} agents")
 
     async def execute_workflow(
         self, query: str, context: Dict[str, Any] = None
@@ -51,10 +66,10 @@ class AgentOrchestrator:
         Returns:
             Dict containing workflow results
         """
-        workflow_id = f"workflow_{int(time.time())}"
+        workflow_id = "workflow_{int(time.time())}"
         start_time = time.time()
 
-        logger.info(f"Starting workflow {workflow_id} for query: {query[:50]}...")
+        logger.info("Starting workflow {workflow_id} for query: {query[:50]}...")
 
         try:
             # Step 1: Planning - Decompose task
@@ -102,14 +117,14 @@ class AgentOrchestrator:
             self.execution_history.append(final_result)
 
             logger.info(
-                f"Workflow {workflow_id} completed successfully in {execution_time:.3f}s"
+                "Workflow {workflow_id} completed successfully in {execution_time:.3f}s"
             )
 
             return final_result
 
         except Exception as e:
             execution_time = time.time() - start_time
-            logger.error(f"Workflow {workflow_id} failed: {e}")
+            logger.error("Workflow {workflow_id} failed: {e}")
 
             return {
                 "workflow_id": workflow_id,
@@ -126,9 +141,9 @@ class AgentOrchestrator:
         planner = self.agents["planner"]
 
         task = AgentTask(
-            task_id=f"plan_{int(time.time())}",
+            task_id="plan_{int(time.time())}",
             task_type="task_decomposition",
-            description=f"Decompose task for query: {query}",
+            description="Decompose task for query: {query}",
             parameters={
                 "query": query,
                 "context": context or {},
@@ -149,7 +164,7 @@ class AgentOrchestrator:
         if not research_subtasks:
             # Create default research task
             research_task = AgentTask(
-                task_id=f"research_{int(time.time())}",
+                task_id="research_{int(time.time())}",
                 task_type="research",
                 description="Conduct research",
                 parameters={
@@ -176,7 +191,7 @@ class AgentOrchestrator:
 
         # Create generation task based on research results
         generation_task = AgentTask(
-            task_id=f"generate_{int(time.time())}",
+            task_id="generate_{int(time.time())}",
             task_type="generation",
             description="Generate response based on research",
             parameters={
@@ -195,7 +210,7 @@ class AgentOrchestrator:
 
         # Create execution task for logging and metrics
         execution_task = AgentTask(
-            task_id=f"execute_{int(time.time())}",
+            task_id="execute_{int(time.time())}",
             task_type="execution",
             description="Execute side effects",
             parameters={
@@ -205,7 +220,7 @@ class AgentOrchestrator:
                         "parameters": {
                             "message": "Workflow completed successfully",
                             "log_level": "info",
-                            "context": {"workflow_id": f"workflow_{int(time.time())}"},
+                            "context": {"workflow_id": "workflow_{int(time.time())}"},
                         },
                     },
                     {
@@ -243,13 +258,13 @@ class AgentOrchestrator:
             AgentResult: Result of task execution
         """
         if agent_type not in self.agents:
-            raise ValueError(f"Unknown agent type: {agent_type}")
+            raise ValueError("Unknown agent type: {agent_type}")
 
         agent = self.agents[agent_type]
 
         if not agent.can_handle_task(task):
             raise ValueError(
-                f"Agent {agent_type} cannot handle task type: {task.task_type}"
+                "Agent {agent_type} cannot handle task type: {task.task_type}"
             )
 
         return await agent.execute_task(task)
@@ -295,17 +310,17 @@ class AgentOrchestrator:
         """Deactivate a specific agent."""
         if agent_type in self.agents:
             self.agents[agent_type].deactivate()
-            logger.info(f"Agent {agent_type} deactivated")
+            logger.info("Agent {agent_type} deactivated")
         else:
-            raise ValueError(f"Unknown agent type: {agent_type}")
+            raise ValueError("Unknown agent type: {agent_type}")
 
     def activate_agent(self, agent_type: str):
         """Activate a specific agent."""
         if agent_type in self.agents:
             self.agents[agent_type].activate()
-            logger.info(f"Agent {agent_type} activated")
+            logger.info("Agent {agent_type} activated")
         else:
-            raise ValueError(f"Unknown agent type: {agent_type}")
+            raise ValueError("Unknown agent type: {agent_type}")
 
     def reset_agents(self):
         """Reset all agents to initial state."""

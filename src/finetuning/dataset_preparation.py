@@ -2,16 +2,27 @@
 Dataset Preparation for Fine-tuning - Alpaca/ShareGPT Format.
 """
 
+import hashlib
 import json
 import os
 import random
+import re
 import time
+import uuid
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
 from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
 from sklearn.model_selection import train_test_split
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 
 @dataclass
@@ -68,7 +79,7 @@ class DatasetPreparation:
         }
 
         logger.info(
-            f"Dataset preparation initialized with output directory: {output_dir}"
+            "Dataset preparation initialized with output directory: {output_dir}"
         )
 
     def create_instruction_dataset_from_documents(
@@ -109,7 +120,7 @@ class DatasetPreparation:
                     examples.extend(task_examples)
 
         logger.info(
-            f"Generated {len(examples)} instruction examples from {len(documents)} documents"
+            "Generated {len(examples)} instruction examples from {len(documents)} documents"
         )
         return examples
 
@@ -190,7 +201,7 @@ class DatasetPreparation:
         summary = " ".join(words[:summary_length]) + "..."
 
         return InstructionExample(
-            instruction=f"{template} {text[:200]}...",
+            instruction="{template} {text[:200]}...",
             input=text,
             output=summary,
             context=metadata.get("document_id", ""),
@@ -214,13 +225,13 @@ class DatasetPreparation:
 
         # Create a simple "what" question
         question = (
-            f"What is mentioned about {words[2] if len(words) > 2 else 'this topic'}?"
+            "What is mentioned about {words[2] if len(words) > 2 else 'this topic'}?"
         )
         answer = first_sentence
 
         return InstructionExample(
-            instruction=f"{template} {question}",
-            input=f"Context: {text}",
+            instruction="{template} {question}",
+            input="Context: {text}",
             output=answer,
             context=metadata.get("document_id", ""),
             metadata={"task_type": "question_answering", "source_metadata": metadata},
@@ -231,12 +242,12 @@ class DatasetPreparation:
     ) -> InstructionExample:
         """Create an analysis example."""
         analysis = (
-            f"This text discusses {len(text.split())} words covering various topics. "
-            f"The content appears to be {metadata.get('document_type', 'informational')} in nature."
+            "This text discusses {len(text.split())} words covering various topics. "
+            "The content appears to be {metadata.get('document_type', 'informational')} in nature."
         )
 
         return InstructionExample(
-            instruction=f"{template} {text[:150]}...",
+            instruction="{template} {text[:150]}...",
             input=text,
             output=analysis,
             context=metadata.get("document_id", ""),
@@ -251,11 +262,11 @@ class DatasetPreparation:
         key_points = sentences[:3]  # Extract first 3 sentences as key points
 
         extracted_info = "\n".join(
-            [f"- {point.strip()}" for point in key_points if point.strip()]
+            ["- {point.strip()}" for point in key_points if point.strip()]
         )
 
         return InstructionExample(
-            instruction=f"{template} {text[:150]}...",
+            instruction="{template} {text[:150]}...",
             input=text,
             output=extracted_info,
             context=metadata.get("document_id", ""),
@@ -276,13 +287,13 @@ class DatasetPreparation:
         part2 = ". ".join(sentences[mid_point:])
 
         comparison = (
-            f"Part 1 focuses on {len(part1.split())} words, while Part 2 contains {len(part2.split())} words. "
-            f"Both sections contribute to the overall topic."
+            "Part 1 focuses on {len(part1.split())} words, while Part 2 contains {len(part2.split())} words. "
+            "Both sections contribute to the overall topic."
         )
 
         return InstructionExample(
-            instruction=f"{template} the following two sections",
-            input=f"Section 1: {part1}\n\nSection 2: {part2}",
+            instruction="{template} the following two sections",
+            input="Section 1: {part1}\n\nSection 2: {part2}",
             output=comparison,
             context=metadata.get("document_id", ""),
             metadata={"task_type": "comparison", "source_metadata": metadata},
@@ -310,7 +321,7 @@ class DatasetPreparation:
             }
             alpaca_data.append(alpaca_example)
 
-        logger.info(f"Converted {len(examples)} examples to Alpaca format")
+        logger.info("Converted {len(examples)} examples to Alpaca format")
         return alpaca_data
 
     def convert_to_sharegpt_format(
@@ -332,14 +343,14 @@ class DatasetPreparation:
                 "conversations": [
                     {
                         "from": "human",
-                        "value": f"{example.instruction}\n\n{example.input}",
+                        "value": "{example.instruction}\n\n{example.input}",
                     },
                     {"from": "gpt", "value": example.output},
                 ]
             }
             sharegpt_data.append(sharegpt_example)
 
-        logger.info(f"Converted {len(examples)} examples to ShareGPT format")
+        logger.info("Converted {len(examples)} examples to ShareGPT format")
         return sharegpt_data
 
     def create_huggingface_dataset(
@@ -382,7 +393,7 @@ class DatasetPreparation:
         )
 
         logger.info(
-            f"Created dataset with {len(train_data)} train, {len(val_data)} validation, {len(test_data)} test examples"
+            "Created dataset with {len(train_data)} train, {len(val_data)} validation, {len(test_data)} test examples"
         )
         return dataset_dict
 
@@ -398,20 +409,20 @@ class DatasetPreparation:
             Path to saved dataset
         """
         timestamp = str(int(time.time()))
-        dataset_path = os.path.join(self.output_dir, f"dataset_{format}_{timestamp}")
+        dataset_path = os.path.join(self.output_dir, "dataset_{format}_{timestamp}")
 
         if format == "huggingface":
             dataset_dict.save_to_disk(dataset_path)
         else:
             # Save as JSON files
             for split_name, dataset in dataset_dict.items():
-                split_path = os.path.join(dataset_path, f"{split_name}.json")
+                split_path = os.path.join(dataset_path, "{split_name}.json")
                 os.makedirs(os.path.dirname(split_path), exist_ok=True)
 
                 with open(split_path, "w") as f:
                     json.dump(dataset.to_list(), f, indent=2)
 
-        logger.info(f"Dataset saved to {dataset_path}")
+        logger.info("Dataset saved to {dataset_path}")
         return dataset_path
 
     def load_existing_dataset(self, dataset_path: str) -> DatasetDict:
@@ -431,13 +442,13 @@ class DatasetPreparation:
             # JSON format
             dataset_dict = DatasetDict()
             for split in ["train", "validation", "test"]:
-                split_path = os.path.join(dataset_path, f"{split}.json")
+                split_path = os.path.join(dataset_path, "{split}.json")
                 if os.path.exists(split_path):
                     with open(split_path, "r") as f:
                         data = json.load(f)
                     dataset_dict[split] = Dataset.from_list(data)
 
-        logger.info(f"Loaded dataset from {dataset_path}")
+        logger.info("Loaded dataset from {dataset_path}")
         return dataset_dict
 
     def get_dataset_stats(self, dataset_dict: DatasetDict) -> Dict[str, Any]:
@@ -470,5 +481,5 @@ class DatasetPreparation:
             }
             stats[split_name] = split_stats
 
-        logger.info(f"Dataset statistics: {stats}")
+        logger.info("Dataset statistics: {stats}")
         return stats

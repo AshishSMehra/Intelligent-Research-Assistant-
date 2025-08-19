@@ -7,12 +7,26 @@ for logs and outputs to ensure privacy and compliance.
 
 import hashlib
 import json
+import os
+import random
 import re
+import time
+import uuid
+from collections import deque
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 
 class PIIType(Enum):
@@ -166,7 +180,7 @@ class PIIRedactor:
         for name, pattern_str in self.custom_patterns.items():
             self.compiled_patterns[name] = re.compile(pattern_str, re.IGNORECASE)
 
-        logger.info(f"PII Redactor initialized with {len(self.patterns)} patterns")
+        logger.info("PII Redactor initialized with {len(self.patterns)} patterns")
 
     def detect_pii(self, text: str) -> List[Dict[str, Any]]:
         """Detect PII in text without redacting."""
@@ -324,7 +338,6 @@ class PIIRedactor:
 
     def _get_timestamp(self) -> str:
         """Get current timestamp."""
-        import time
 
         return time.strftime("%Y-%m-%d %H:%M:%S")
 

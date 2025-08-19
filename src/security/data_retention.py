@@ -8,15 +8,24 @@ to ensure GDPR compliance and user privacy rights.
 import hashlib
 import json
 import os
-import time
+import random
+import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
 import redis
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
 from flask import g, jsonify, request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 
 class DataCategory(Enum):
@@ -211,7 +220,7 @@ class DataRetentionManager:
                 seconds=policy.retention_period.value
             )
 
-        record_id = f"retention_{int(time.time())}_{hashlib.md5(f'{user_id}_{data_id}'.encode()).hexdigest()[:8]}"
+        record_id = "retention_{int(time.time())}_{hashlib.md5(f'{user_id}_{data_id}'.encode()).hexdigest()[:8]}"
 
         record = DataRetentionRecord(
             record_id=record_id,
@@ -226,7 +235,7 @@ class DataRetentionManager:
         self.retention_records[record_id] = record
         self._store_retention_record(record)
 
-        logger.info(f"Created retention record: {record_id} for user {user_id}")
+        logger.info("Created retention record: {record_id} for user {user_id}")
         return record_id
 
     def _store_retention_record(self, record: DataRetentionRecord):
@@ -251,7 +260,7 @@ class DataRetentionManager:
         }
 
         self.redis_client.hset(
-            f"retention_record:{record.record_id}", mapping=record_data
+            "retention_record:{record.record_id}", mapping=record_data
         )
 
     def get_retention_records(
@@ -296,25 +305,25 @@ class DataRetentionManager:
             }
 
             # Store in Redis with expiration
-            task_id = f"deletion_task_{int(time.time())}_{hashlib.md5(f'{user_id}_{data_category.value}'.encode()).hexdigest()[:8]}"
+            task_id = "deletion_task_{int(time.time())}_{hashlib.md5(f'{user_id}_{data_category.value}'.encode()).hexdigest()[:8]}"
             self.redis_client.setex(
-                f"deletion_task:{task_id}",
+                "deletion_task:{task_id}",
                 int((deletion_date - datetime.now()).total_seconds()),
                 json.dumps(deletion_task),
             )
 
-            logger.info(f"Scheduled data deletion: {task_id} for user {user_id}")
+            logger.info("Scheduled data deletion: {task_id} for user {user_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to schedule data deletion: {e}")
+            logger.error("Failed to schedule data deletion: {e}")
             return False
 
     def execute_data_deletion(self, user_id: str, data_category: DataCategory) -> bool:
         """Execute data deletion for a user and category."""
         try:
             logger.info(
-                f"Executing data deletion for user {user_id}, category {data_category.value}"
+                "Executing data deletion for user {user_id}, category {data_category.value}"
             )
 
             # Update retention records
@@ -339,50 +348,50 @@ class DataRetentionManager:
                 self._delete_session_data(user_id)
 
             logger.info(
-                f"Data deletion completed for user {user_id}, category {data_category.value}"
+                "Data deletion completed for user {user_id}, category {data_category.value}"
             )
             return True
 
         except Exception as e:
-            logger.error(f"Failed to execute data deletion: {e}")
+            logger.error("Failed to execute data deletion: {e}")
             return False
 
     def _delete_chat_history(self, user_id: str):
         """Delete chat history for a user."""
         # Implementation would delete from chat service
-        logger.info(f"Deleting chat history for user: {user_id}")
+        logger.info("Deleting chat history for user: {user_id}")
 
     def _delete_search_history(self, user_id: str):
         """Delete search history for a user."""
         # Implementation would delete from search service
-        logger.info(f"Deleting search history for user: {user_id}")
+        logger.info("Deleting search history for user: {user_id}")
 
     def _delete_uploaded_documents(self, user_id: str):
         """Delete uploaded documents for a user."""
         # Implementation would delete from document service
-        logger.info(f"Deleting uploaded documents for user: {user_id}")
+        logger.info("Deleting uploaded documents for user: {user_id}")
 
     def _delete_embeddings(self, user_id: str):
         """Delete embeddings for a user."""
         # Implementation would delete from vector database
-        logger.info(f"Deleting embeddings for user: {user_id}")
+        logger.info("Deleting embeddings for user: {user_id}")
 
     def _delete_feedback_data(self, user_id: str):
         """Delete feedback data for a user."""
         # Implementation would delete from feedback service
-        logger.info(f"Deleting feedback data for user: {user_id}")
+        logger.info("Deleting feedback data for user: {user_id}")
 
     def _delete_session_data(self, user_id: str):
         """Delete session data for a user."""
         # Implementation would delete from session storage
-        logger.info(f"Deleting session data for user: {user_id}")
+        logger.info("Deleting session data for user: {user_id}")
 
     def archive_data(self, user_id: str, data_category: DataCategory) -> bool:
         """Archive data before deletion."""
         try:
             # Implementation would archive data to cold storage
             logger.info(
-                f"Archiving data for user {user_id}, category {data_category.value}"
+                "Archiving data for user {user_id}, category {data_category.value}"
             )
 
             # Update retention records
@@ -394,7 +403,7 @@ class DataRetentionManager:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to archive data: {e}")
+            logger.error("Failed to archive data: {e}")
             return False
 
     def get_data_summary(self, user_id: str) -> Dict[str, Any]:
@@ -451,8 +460,6 @@ class OptOutManager:
         if effective_date is None:
             effective_date = datetime.now()
 
-        request_id = f"optout_{int(time.time())}_{hashlib.md5(f'{user_id}_{opt_out_type.value}'.encode()).hexdigest()[:8]}"
-
         opt_out_request = OptOutRequest(
             user_id=user_id,
             opt_out_type=opt_out_type,
@@ -462,11 +469,14 @@ class OptOutManager:
             status="pending",
         )
 
+        # Generate request ID
+        request_id = str(uuid.uuid4())
+
         # Store request
         self.opt_out_requests[request_id] = opt_out_request
         self._store_opt_out_request(request_id, opt_out_request)
 
-        logger.info(f"Created opt-out request: {request_id} for user {user_id}")
+        logger.info("Created opt-out request: {request_id} for user {user_id}")
         return request_id
 
     def _store_opt_out_request(self, request_id: str, request: OptOutRequest):
@@ -480,7 +490,7 @@ class OptOutManager:
             "status": request.status,
         }
 
-        self.redis_client.hset(f"optout_request:{request_id}", mapping=request_data)
+        self.redis_client.hset("optout_request:{request_id}", mapping=request_data)
 
     def activate_opt_out(self, request_id: str) -> bool:
         """Activate an opt-out request."""
@@ -495,11 +505,11 @@ class OptOutManager:
             # Apply opt-out based on type
             self._apply_opt_out(request.user_id, request.opt_out_type)
 
-            logger.info(f"Activated opt-out request: {request_id}")
+            logger.info("Activated opt-out request: {request_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to activate opt-out request: {e}")
+            logger.error("Failed to activate opt-out request: {e}")
             return False
 
     def _apply_opt_out(self, user_id: str, opt_out_type: OptOutType):
@@ -519,32 +529,32 @@ class OptOutManager:
 
     def _apply_data_collection_opt_out(self, user_id: str):
         """Apply data collection opt-out."""
-        logger.info(f"Applying data collection opt-out for user: {user_id}")
+        logger.info("Applying data collection opt-out for user: {user_id}")
         # Implementation would stop collecting new data
 
     def _apply_analytics_opt_out(self, user_id: str):
         """Apply analytics opt-out."""
-        logger.info(f"Applying analytics opt-out for user: {user_id}")
+        logger.info("Applying analytics opt-out for user: {user_id}")
         # Implementation would stop analytics tracking
 
     def _apply_marketing_opt_out(self, user_id: str):
         """Apply marketing opt-out."""
-        logger.info(f"Applying marketing opt-out for user: {user_id}")
+        logger.info("Applying marketing opt-out for user: {user_id}")
         # Implementation would stop marketing communications
 
     def _apply_third_party_opt_out(self, user_id: str):
         """Apply third-party sharing opt-out."""
-        logger.info(f"Applying third-party sharing opt-out for user: {user_id}")
+        logger.info("Applying third-party sharing opt-out for user: {user_id}")
         # Implementation would stop third-party data sharing
 
     def _apply_automated_decisions_opt_out(self, user_id: str):
         """Apply automated decisions opt-out."""
-        logger.info(f"Applying automated decisions opt-out for user: {user_id}")
+        logger.info("Applying automated decisions opt-out for user: {user_id}")
         # Implementation would provide human review option
 
     def _apply_profiling_opt_out(self, user_id: str):
         """Apply profiling opt-out."""
-        logger.info(f"Applying profiling opt-out for user: {user_id}")
+        logger.info("Applying profiling opt-out for user: {user_id}")
         # Implementation would stop user profiling
 
     def revoke_opt_out(self, request_id: str) -> bool:
@@ -557,11 +567,11 @@ class OptOutManager:
             request.status = "revoked"
             self._store_opt_out_request(request_id, request)
 
-            logger.info(f"Revoked opt-out request: {request_id}")
+            logger.info("Revoked opt-out request: {request_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to revoke opt-out request: {e}")
+            logger.error("Failed to revoke opt-out request: {e}")
             return False
 
     def get_user_opt_outs(self, user_id: str) -> List[OptOutRequest]:

@@ -7,16 +7,27 @@ It provides role-based permissions, user management, and route protection.
 
 import hashlib
 import os
+import random
 import time
+import uuid
+from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from functools import wraps
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import jwt
+import numpy as np
+import pandas as pd
 import redis
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
 from flask import g, jsonify, request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 
 class Permission(Enum):
@@ -44,7 +55,7 @@ class Permission(Enum):
     MANAGE_MODELS = "manage_models"
 
     # RLHF permissions
-    ACCESS_RLHF = "access_rlhf"
+    ACCESS_RLHF = "access_rlh"
     PROVIDE_FEEDBACK = "provide_feedback"
 
     # Admin permissions
@@ -195,18 +206,18 @@ class RBACManager:
                 "updated_at": role.updated_at,
             }
 
-            self.redis_client.hset(f"role:{role.name}", mapping=role_data)
-            logger.info(f"Created role: {role.name}")
+            self.redis_client.hset("role:{role.name}", mapping=role_data)
+            logger.info("Created role: {role.name}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to create role {role.name}: {e}")
+            logger.error("Failed to create role {role.name}: {e}")
             return False
 
     def get_role(self, role_name: str) -> Optional[Role]:
         """Get a role by name."""
         try:
-            role_data = self.redis_client.hgetall(f"role:{role_name}")
+            role_data = self.redis_client.hgetall("role:{role_name}")
             if not role_data:
                 return None
 
@@ -225,7 +236,7 @@ class RBACManager:
             )
 
         except Exception as e:
-            logger.error(f"Failed to get role {role_name}: {e}")
+            logger.error("Failed to get role {role_name}: {e}")
             return None
 
     def update_role(self, role_name: str, permissions: Set[Permission]) -> bool:
@@ -243,23 +254,23 @@ class RBACManager:
                 "updated_at": role.updated_at,
             }
 
-            self.redis_client.hset(f"role:{role_name}", mapping=role_data)
-            logger.info(f"Updated role: {role_name}")
+            self.redis_client.hset("role:{role_name}", mapping=role_data)
+            logger.info("Updated role: {role_name}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to update role {role_name}: {e}")
+            logger.error("Failed to update role {role_name}: {e}")
             return False
 
     def delete_role(self, role_name: str) -> bool:
         """Delete a role."""
         try:
-            self.redis_client.delete(f"role:{role_name}")
-            logger.info(f"Deleted role: {role_name}")
+            self.redis_client.delete("role:{role_name}")
+            logger.info("Deleted role: {role_name}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to delete role {role_name}: {e}")
+            logger.error("Failed to delete role {role_name}: {e}")
             return False
 
     def create_user(self, user: User) -> bool:
@@ -276,18 +287,18 @@ class RBACManager:
                 "metadata": str(user.metadata),
             }
 
-            self.redis_client.hset(f"user:{user.user_id}", mapping=user_data)
-            logger.info(f"Created user: {user.username}")
+            self.redis_client.hset("user:{user.user_id}", mapping=user_data)
+            logger.info("Created user: {user.username}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to create user {user.username}: {e}")
+            logger.error("Failed to create user {user.username}: {e}")
             return False
 
     def get_user(self, user_id: str) -> Optional[User]:
         """Get a user by ID."""
         try:
-            user_data = self.redis_client.hgetall(f"user:{user_id}")
+            user_data = self.redis_client.hgetall("user:{user_id}")
             if not user_data:
                 return None
 
@@ -311,30 +322,30 @@ class RBACManager:
             )
 
         except Exception as e:
-            logger.error(f"Failed to get user {user_id}: {e}")
+            logger.error("Failed to get user {user_id}: {e}")
             return None
 
     def update_user_roles(self, user_id: str, roles: List[str]) -> bool:
         """Update user roles."""
         try:
             user_data = {"roles": ",".join(roles)}
-            self.redis_client.hset(f"user:{user_id}", mapping=user_data)
-            logger.info(f"Updated roles for user: {user_id}")
+            self.redis_client.hset("user:{user_id}", mapping=user_data)
+            logger.info("Updated roles for user: {user_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to update roles for user {user_id}: {e}")
+            logger.error("Failed to update roles for user {user_id}: {e}")
             return False
 
     def delete_user(self, user_id: str) -> bool:
         """Delete a user."""
         try:
-            self.redis_client.delete(f"user:{user_id}")
-            logger.info(f"Deleted user: {user_id}")
+            self.redis_client.delete("user:{user_id}")
+            logger.info("Deleted user: {user_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to delete user {user_id}: {e}")
+            logger.error("Failed to delete user {user_id}: {e}")
             return False
 
     def authenticate_user(self, username: str, password: str) -> Optional[str]:
@@ -358,7 +369,7 @@ class RBACManager:
             if password:  # Simple check for demo
                 # Update last login
                 self.redis_client.hset(
-                    f"user:{user.user_id}", "last_login", str(time.time())
+                    "user:{user.user_id}", "last_login", str(time.time())
                 )
 
                 # Generate JWT token
@@ -377,7 +388,7 @@ class RBACManager:
             return None
 
         except Exception as e:
-            logger.error(f"Authentication failed for {username}: {e}")
+            logger.error("Authentication failed for {username}: {e}")
             return None
 
     def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
@@ -392,7 +403,7 @@ class RBACManager:
             logger.warning("JWT token expired")
             return None
         except jwt.InvalidTokenError as e:
-            logger.warning(f"Invalid JWT token: {e}")
+            logger.warning("Invalid JWT token: {e}")
             return None
 
     def has_permission(self, user_id: str, permission: Permission) -> bool:
@@ -411,7 +422,7 @@ class RBACManager:
             return False
 
         except Exception as e:
-            logger.error(f"Permission check failed for user {user_id}: {e}")
+            logger.error("Permission check failed for user {user_id}: {e}")
             return False
 
     def get_user_permissions(self, user_id: str) -> Set[Permission]:
@@ -430,7 +441,7 @@ class RBACManager:
             return permissions
 
         except Exception as e:
-            logger.error(f"Failed to get permissions for user {user_id}: {e}")
+            logger.error("Failed to get permissions for user {user_id}: {e}")
             return set()
 
 

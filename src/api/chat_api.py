@@ -2,9 +2,28 @@
 Chat API endpoints for the Intelligent Research Assistant.
 """
 
+import hashlib
+import json
+import os
+import random
+import time
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 from ..models.chat import ChatQuery, ChatResponse
 from ..services.chat_service import ChatService
@@ -34,22 +53,20 @@ async def chat_endpoint(chat_query: ChatQuery):
         HTTPException: If query processing fails
     """
     try:
-        logger.info(f"Received chat query: {chat_query.query[:50]}...")
+        logger.info("Received chat query: {chat_query.query[:50]}...")
 
         # Process the query
         response = await chat_service.process_query(chat_query)
 
         logger.info(
-            f"Successfully processed chat query in {response.processing_time:.2f}s"
+            "Successfully processed chat query in {response.processing_time:.2f}s"
         )
 
         return response
 
     except Exception as e:
-        logger.error(f"Error processing chat query: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to process query: {str(e)}"
-        )
+        logger.error("Error processing chat query: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process query: {str(e)}")
 
 
 @chat_router.get("/history/{session_id}")
@@ -73,9 +90,9 @@ async def get_conversation_history(session_id: str):
         }
 
     except Exception as e:
-        logger.error(f"Error getting conversation history: {e}")
+        logger.error("Error getting conversation history: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to get conversation history: {str(e)}"
+            status_code=500, detail="Failed to get conversation history: {str(e)}"
         )
 
 
@@ -96,15 +113,15 @@ async def clear_conversation_history(session_id: str):
         if success:
             return {
                 "status": "success",
-                "message": f"Conversation history cleared for session {session_id}",
+                "message": "Conversation history cleared for session {session_id}",
             }
         else:
-            return {"status": "not_found", "message": f"Session {session_id} not found"}
+            return {"status": "not_found", "message": "Session {session_id} not found"}
 
     except Exception as e:
-        logger.error(f"Error clearing conversation history: {e}")
+        logger.error("Error clearing conversation history: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to clear conversation history: {str(e)}"
+            status_code=500, detail="Failed to clear conversation history: {str(e)}"
         )
 
 
@@ -122,8 +139,8 @@ async def get_chat_metrics():
         return {"status": "success", "metrics": metrics}
 
     except Exception as e:
-        logger.error(f"Error getting metrics: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get metrics: {str(e)}")
+        logger.error("Error getting metrics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get metrics: {str(e)}")
 
 
 @chat_router.get("/llm/providers")
@@ -145,9 +162,9 @@ async def get_llm_providers():
         }
 
     except Exception as e:
-        logger.error(f"Error getting LLM providers: {e}")
+        logger.error("Error getting LLM providers: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to get LLM providers: {str(e)}"
+            status_code=500, detail="Failed to get LLM providers: {str(e)}"
         )
 
 

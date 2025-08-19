@@ -1,15 +1,30 @@
+import hashlib
+import json
 import os
+import random
+import re
+import time
 import uuid
-from typing import List, Optional
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Text extraction
 import fitz  # PyMuPDF
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 
 # Vector DB (Qdrant)
 from qdrant_client import QdrantClient, models
 
 # Embedding generation
 from sentence_transformers import SentenceTransformer
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
 from logging_config import logger
 
@@ -40,11 +55,11 @@ def extract_text_from_pdf(file_path: str) -> str:
                 text += "\n\n--- Page Break ---\n\n"
 
         logger.info(
-            f"Successfully extracted text from {file_path} ({len(pages_data)} pages)"
+            "Successfully extracted text from {file_path} ({len(pages_data)} pages)"
         )
         return text
     except Exception as e:
-        logger.error(f"Failed to extract text from {file_path}. Error: {e}")
+        logger.error("Failed to extract text from {file_path}. Error: {e}")
         return ""
 
 
@@ -71,16 +86,15 @@ def extract_pages_from_pdf(file_path: str) -> List[dict]:
             }
         ]
     """
-    import time
 
     try:
         # Check if file exists and is readable
         if not os.path.exists(file_path):
-            logger.error(f"PDF file not found: {file_path}")
+            logger.error("PDF file not found: {file_path}")
             return []
 
         if os.path.getsize(file_path) == 0:
-            logger.error(f"PDF file is empty: {file_path}")
+            logger.error("PDF file is empty: {file_path}")
             return []
 
         start_time = time.time()
@@ -89,21 +103,21 @@ def extract_pages_from_pdf(file_path: str) -> List[dict]:
             doc = fitz.open(file_path)
         except Exception as e:
             if "password" in str(e).lower() or "encrypted" in str(e).lower():
-                logger.error(f"PDF is password-protected or encrypted: {file_path}")
+                logger.error("PDF is password-protected or encrypted: {file_path}")
                 return []
             elif "damaged" in str(e).lower() or "corrupt" in str(e).lower():
-                logger.error(f"PDF appears to be corrupted: {file_path}")
+                logger.error("PDF appears to be corrupted: {file_path}")
                 return []
             else:
-                logger.error(f"Failed to open PDF {file_path}: {e}")
+                logger.error("Failed to open PDF {file_path}: {e}")
                 return []
 
         # Check if PDF is valid
         if doc.page_count == 0:
-            logger.warning(f"PDF has no pages: {file_path}")
+            logger.warning("PDF has no pages: {file_path}")
             return []
 
-        logger.info(f"Processing PDF with {doc.page_count} pages: {file_path}")
+        logger.info("Processing PDF with {doc.page_count} pages: {file_path}")
 
         pages_data = []
         empty_pages = 0
@@ -122,9 +136,7 @@ def extract_pages_from_pdf(file_path: str) -> List[dict]:
                 try:
                     page_text = page.get_text()
                 except Exception as e:
-                    logger.error(
-                        f"Failed to extract text from page {page_num + 1}: {e}"
-                    )
+                    logger.error("Failed to extract text from page {page_num + 1}: {e}")
                     page_text = ""
 
                 char_count = len(page_text.strip())
@@ -152,12 +164,12 @@ def extract_pages_from_pdf(file_path: str) -> List[dict]:
                     likely_scanned = True
                     scanned_pages += 1
                     logger.warning(
-                        f"Page {page_num + 1} appears to be scanned (images but no text) - OCR may be needed"
+                        "Page {page_num + 1} appears to be scanned (images but no text) - OCR may be needed"
                     )
                 elif likely_scanned:
                     scanned_pages += 1
                     logger.info(
-                        f"Page {page_num + 1} may be scanned ({image_count} images, {char_count} chars)"
+                        "Page {page_num + 1} may be scanned ({image_count} images, {char_count} chars)"
                     )
 
                 page_processing_time = (time.time() - page_start_time) * 1000
@@ -183,30 +195,30 @@ def extract_pages_from_pdf(file_path: str) -> List[dict]:
                     empty_pages += 1
                     if has_images:
                         logger.warning(
-                            f"Page {page_num + 1} is empty but contains {image_count} image(s) - likely scanned"
+                            "Page {page_num + 1} is empty but contains {image_count} image(s) - likely scanned"
                         )
                     else:
-                        logger.warning(f"Page {page_num + 1} is completely empty")
+                        logger.warning("Page {page_num + 1} is completely empty")
                 elif likely_image_only:
                     image_heavy_pages += 1
                     logger.info(
-                        f"Page {page_num + 1} is image-heavy ({image_count} images, {char_count} chars)"
+                        "Page {page_num + 1} is image-heavy ({image_count} images, {char_count} chars)"
                     )
                 elif is_very_large:
                     very_large_pages += 1
                     logger.info(
-                        f"Page {page_num + 1} is very large ({char_count:,} characters)"
+                        "Page {page_num + 1} is very large ({char_count:,} characters)"
                     )
 
                 # Log slow pages
                 if page_processing_time > 1000:  # > 1 second
                     logger.warning(
-                        f"Page {page_num + 1} took {page_processing_time:.0f}ms to process"
+                        "Page {page_num + 1} took {page_processing_time:.0f}ms to process"
                     )
 
             except Exception as e:
                 corrupted_pages += 1
-                logger.error(f"Failed to process page {page_num + 1}: {e}")
+                logger.error("Failed to process page {page_num + 1}: {e}")
 
                 # Add corrupted page entry
                 page_data = {
@@ -230,34 +242,34 @@ def extract_pages_from_pdf(file_path: str) -> List[dict]:
         processing_time = (time.time() - start_time) * 1000
 
         logger.info(
-            f"PDF analysis complete ({processing_time:.0f}ms): "
-            f"{total_pages} total pages, "
-            f"{content_pages} with content, "
-            f"{empty_pages} empty, "
-            f"{image_heavy_pages} image-heavy, "
-            f"{scanned_pages} likely scanned, "
-            f"{very_large_pages} very large, "
-            f"{corrupted_pages} corrupted"
+            "PDF analysis complete ({processing_time:.0f}ms): "
+            "{total_pages} total pages, "
+            "{content_pages} with content, "
+            "{empty_pages} empty, "
+            "{image_heavy_pages} image-heavy, "
+            "{scanned_pages} likely scanned, "
+            "{very_large_pages} very large, "
+            "{corrupted_pages} corrupted"
         )
 
         # Recommendations based on analysis
         if scanned_pages > 0:
             logger.info(
-                f"💡 Recommendation: {scanned_pages} pages may benefit from OCR processing"
+                "💡 Recommendation: {scanned_pages} pages may benefit from OCR processing"
             )
 
         if corrupted_pages > 0:
             logger.warning(
-                f"⚠️  {corrupted_pages} pages could not be processed - PDF may be damaged"
+                "⚠️  {corrupted_pages} pages could not be processed - PDF may be damaged"
             )
 
         if empty_pages > total_pages * 0.5:
-            logger.warning(f"⚠️  More than 50% of pages are empty - check PDF quality")
+            logger.warning("⚠️  More than 50% of pages are empty - check PDF quality")
 
         return pages_data
 
     except Exception as e:
-        logger.error(f"Critical failure extracting pages from {file_path}: {e}")
+        logger.error("Critical failure extracting pages from {file_path}: {e}")
         return []
 
 
@@ -285,7 +297,7 @@ def chunk_text(text: str, chunk_size: int = 500, chunk_overlap: int = 100) -> Li
     # Validate overlap is not too large
     if chunk_overlap >= chunk_size:
         logger.warning(
-            f"Overlap ({chunk_overlap}) >= chunk_size ({chunk_size}). Setting overlap to {chunk_size // 2}"
+            "Overlap ({chunk_overlap}) >= chunk_size ({chunk_size}). Setting overlap to {chunk_size // 2}"
         )
         chunk_overlap = chunk_size // 2
 
@@ -408,7 +420,7 @@ def chunk_text_by_tokens(
     # Validate overlap
     if chunk_overlap >= chunk_size:
         logger.warning(
-            f"Token overlap ({chunk_overlap}) >= chunk_size ({chunk_size}). Setting overlap to {chunk_size // 2}"
+            "Token overlap ({chunk_overlap}) >= chunk_size ({chunk_size}). Setting overlap to {chunk_size // 2}"
         )
         chunk_overlap = chunk_size // 2
 
@@ -460,9 +472,7 @@ def chunk_text_by_tokens(
         step_size = max(1, chunk_size - chunk_overlap)
         start += step_size
 
-    logger.info(
-        f"Token-based chunking: {len(chunks)} chunks from {total_tokens} tokens"
-    )
+    logger.info("Token-based chunking: {len(chunks)} chunks from {total_tokens} tokens")
     return chunks
 
 
@@ -511,17 +521,17 @@ def chunk_text_with_pages(
             skipped_pages += 1
             if page_data.get("has_images", False):
                 logger.info(
-                    f"Skipping page {page_num}: Empty but has images (likely scanned)"
+                    "Skipping page {page_num}: Empty but has images (likely scanned)"
                 )
                 quality_issues.append("scanned_no_text")
             else:
-                logger.debug(f"Skipping page {page_num}: Completely empty")
+                logger.debug("Skipping page {page_num}: Completely empty")
                 quality_issues.append("empty")
             continue
 
         if page_data.get("is_corrupted", False):
             skipped_pages += 1
-            logger.warning(f"Skipping page {page_num}: Corrupted or unreadable")
+            logger.warning("Skipping page {page_num}: Corrupted or unreadable")
             quality_issues.append("corrupted")
             continue
 
@@ -532,7 +542,7 @@ def chunk_text_with_pages(
             quality_issues.append("likely_scanned")
             if page_data["char_count"] < 20:
                 logger.info(
-                    f"Page {page_num} has very little text ({page_data['char_count']} chars) - may need OCR"
+                    "Page {page_num} has very little text ({page_data['char_count']} chars) - may need OCR"
                 )
                 quality_issues.append("needs_ocr")
 
@@ -540,7 +550,7 @@ def chunk_text_with_pages(
         if page_data.get("is_very_large", False):
             quality_issues.append("very_large")
             logger.debug(
-                f"Page {page_num} is very large ({page_data['char_count']:,} chars) - will create many chunks"
+                "Page {page_num} is very large ({page_data['char_count']:,} chars) - will create many chunks"
             )
 
         # Chunk this page's text
@@ -565,14 +575,14 @@ def chunk_text_with_pages(
     # Enhanced logging with recommendations
     total_pages = len(pages_data)
     logger.info(
-        f"Chunking complete: Created {len(chunk_data)} chunks from {processed_pages}/{total_pages} pages "
-        f"({skipped_pages} pages skipped due to quality issues)"
+        "Chunking complete: Created {len(chunk_data)} chunks from {processed_pages}/{total_pages} pages "
+        "({skipped_pages} pages skipped due to quality issues)"
     )
 
     # Quality recommendations
     scanned_chunks = sum(1 for chunk in chunk_data if chunk["has_scanned_content"])
     if scanned_chunks > 0:
-        logger.info(f"💡 {scanned_chunks} chunks may have OCR-quality text")
+        logger.info("💡 {scanned_chunks} chunks may have OCR-quality text")
 
     return chunk_data
 
@@ -618,7 +628,7 @@ def _get_model(model_name: str = None) -> SentenceTransformer:
         return _model
 
     try:
-        logger.info(f"🔄 Loading embedding model: {model_name}")
+        logger.info("🔄 Loading embedding model: {model_name}")
 
         # Load the model with device auto-detection
         _model = SentenceTransformer(model_name)
@@ -629,31 +639,29 @@ def _get_model(model_name: str = None) -> SentenceTransformer:
         max_seq_length = _model.max_seq_length
         embedding_dim = _model.get_sentence_embedding_dimension()
 
-        logger.info(f"✅ Model loaded successfully:")
-        logger.info(f"   📋 Model: {model_name}")
-        logger.info(f"   🖥️  Device: {device}")
-        logger.info(f"   📏 Max sequence length: {max_seq_length}")
-        logger.info(f"   📊 Embedding dimensions: {embedding_dim}")
+        logger.info("✅ Model loaded successfully:")
+        logger.info("   📋 Model: {model_name}")
+        logger.info("   🖥️  Device: {device}")
+        logger.info("   📏 Max sequence length: {max_seq_length}")
+        logger.info("   📊 Embedding dimensions: {embedding_dim}")
 
         return _model
 
     except Exception as e:
-        logger.error(f"❌ Failed to load embedding model '{model_name}': {e}")
+        logger.error("❌ Failed to load embedding model '{model_name}': {e}")
 
         # Try fallback to default model if different model failed
         if model_name != DEFAULT_MODEL_NAME:
-            logger.info(
-                f"🔄 Attempting fallback to default model: {DEFAULT_MODEL_NAME}"
-            )
+            logger.info("🔄 Attempting fallback to default model: {DEFAULT_MODEL_NAME}")
             try:
                 _model = SentenceTransformer(DEFAULT_MODEL_NAME)
                 _model_name = DEFAULT_MODEL_NAME
-                logger.info(f"✅ Fallback model loaded: {DEFAULT_MODEL_NAME}")
+                logger.info("✅ Fallback model loaded: {DEFAULT_MODEL_NAME}")
                 return _model
             except Exception as fallback_error:
-                logger.error(f"❌ Fallback model also failed: {fallback_error}")
+                logger.error("❌ Fallback model also failed: {fallback_error}")
 
-        raise Exception(f"Could not load any embedding model. Original error: {e}")
+        raise Exception("Could not load any embedding model. Original error: {e}")
 
 
 def get_model_info() -> dict:
@@ -701,7 +709,7 @@ def generate_embeddings(chunks: List[str]) -> List[List[float]]:
 
         # Log embedding generation start
         logger.info(
-            f"Generating embeddings for {len(chunks)} chunks using {_model_name}"
+            "Generating embeddings for {len(chunks)} chunks using {_model_name}"
         )
 
         # Generate embeddings with batch processing
@@ -715,7 +723,7 @@ def generate_embeddings(chunks: List[str]) -> List[List[float]]:
         # Validate embeddings
         if len(embeddings) != len(chunks):
             raise ValueError(
-                f"Embedding count mismatch: {len(embeddings)} != {len(chunks)}"
+                "Embedding count mismatch: {len(embeddings)} != {len(chunks)}"
             )
 
         # Convert to list format and validate dimensions
@@ -725,16 +733,16 @@ def generate_embeddings(chunks: List[str]) -> List[List[float]]:
         for i, emb in enumerate(embeddings_list):
             if len(emb) != expected_dim:
                 raise ValueError(
-                    f"Unexpected embedding dimension at index {i}: {len(emb)} != {expected_dim}"
+                    "Unexpected embedding dimension at index {i}: {len(emb)} != {expected_dim}"
                 )
 
         logger.info(
-            f"✅ Successfully generated {len(embeddings_list)} embeddings ({expected_dim}D)"
+            "✅ Successfully generated {len(embeddings_list)} embeddings ({expected_dim}D)"
         )
         return embeddings_list
 
     except Exception as e:
-        logger.error(f"❌ Failed to generate embeddings: {e}")
+        logger.error("❌ Failed to generate embeddings: {e}")
         return []
 
 
@@ -762,7 +770,7 @@ def generate_embeddings_with_metadata(chunk_data: List[dict]) -> List[List[float
             texts.append(text)
             valid_indices.append(i)
         else:
-            logger.warning(f"Skipping empty chunk at index {i}")
+            logger.warning("Skipping empty chunk at index {i}")
 
     if not texts:
         logger.error("No valid text found in chunk data")
@@ -783,7 +791,7 @@ def generate_embeddings_with_metadata(chunk_data: List[dict]) -> List[List[float
     valid_embeddings = [emb for emb in full_embeddings if emb is not None]
 
     logger.info(
-        f"Generated embeddings for {len(valid_embeddings)}/{len(chunk_data)} chunks"
+        "Generated embeddings for {len(valid_embeddings)}/{len(chunk_data)} chunks"
     )
     return valid_embeddings
 
@@ -812,10 +820,10 @@ def create_collection_if_not_exists() -> None:
                     size=VECTOR_SIZE, distance=models.Distance.COSINE
                 ),
             )
-            logger.info(f"Collection '{COLLECTION_NAME}' created.")
+            logger.info("Collection '{COLLECTION_NAME}' created.")
     except Exception as e:
         logger.error(
-            f"Could not connect to or create Qdrant collection. Is Qdrant running? Error: {e}"
+            "Could not connect to or create Qdrant collection. Is Qdrant running? Error: {e}"
         )
 
 
@@ -831,11 +839,8 @@ def get_collection_info() -> dict:
         collection_info = _client.get_collection(COLLECTION_NAME)
 
         # Get collection stats
-        collection_stats = _client.scroll(
+        collection_info = _client.get_collection(
             collection_name=COLLECTION_NAME,
-            limit=1,
-            with_payload=True,
-            with_vectors=False,
         )
 
         # Count points by document
@@ -869,7 +874,7 @@ def get_collection_info() -> dict:
         }
 
     except Exception as e:
-        logger.error(f"Failed to get collection info: {e}")
+        logger.error("Failed to get collection info: {e}")
         return {"status": "error", "error": str(e), "collection_name": COLLECTION_NAME}
 
 
@@ -937,13 +942,12 @@ def store_embeddings_with_metadata(
 
     if len(embeddings) != len(chunk_data):
         logger.error(
-            f"Embedding count ({len(embeddings)}) doesn't match chunk count ({len(chunk_data)})"
+            "Embedding count ({len(embeddings)}) doesn't match chunk count ({len(chunk_data)})"
         )
         return False
 
     try:
         points: List[models.PointStruct] = []
-        import time
 
         current_timestamp = int(time.time())
 
@@ -991,7 +995,7 @@ def store_embeddings_with_metadata(
             # Validate embedding dimensions
             if len(embeddings[i]) != VECTOR_SIZE:
                 logger.error(
-                    f"Embedding dimension mismatch: expected {VECTOR_SIZE}, got {len(embeddings[i])}"
+                    "Embedding dimension mismatch: expected {VECTOR_SIZE}, got {len(embeddings[i])}"
                 )
                 continue
 
@@ -1011,14 +1015,14 @@ def store_embeddings_with_metadata(
         _client.upsert(collection_name=COLLECTION_NAME, points=points, wait=True)
 
         logger.info(
-            f"✅ Successfully stored {len(points)} points for document {document_id} "
-            f"with comprehensive metadata (tags: {len(tags or [])}, "
-            f"custom_metadata: {len(custom_metadata or {})} fields)"
+            "✅ Successfully stored {len(points)} points for document {document_id} "
+            "with comprehensive metadata (tags: {len(tags or [])}, "
+            "custom_metadata: {len(custom_metadata or {})} fields)"
         )
         return True
 
     except Exception as e:
-        logger.error(f"❌ Failed to store embeddings in Qdrant: {e}")
+        logger.error("❌ Failed to store embeddings in Qdrant: {e}")
         return False
 
 
@@ -1109,12 +1113,12 @@ def search_similar_chunks(
             results.append(formatted_result)
 
         logger.info(
-            f"Found {len(results)} similar chunks for query (threshold: {score_threshold})"
+            "Found {len(results)} similar chunks for query (threshold: {score_threshold})"
         )
         return results
 
     except Exception as e:
-        logger.error(f"Failed to search similar chunks: {e}")
+        logger.error("Failed to search similar chunks: {e}")
         return []
 
 
@@ -1170,11 +1174,11 @@ def search_by_document(
         # Sort by chunk_id for consistent ordering
         results.sort(key=lambda x: x.get("chunk_id", 0))
 
-        logger.info(f"Retrieved {len(results)} chunks for document {document_id}")
+        logger.info("Retrieved {len(results)} chunks for document {document_id}")
         return results
 
     except Exception as e:
-        logger.error(f"Failed to search by document: {e}")
+        logger.error("Failed to search by document: {e}")
         return []
 
 
@@ -1210,7 +1214,7 @@ def delete_document(document_id: str) -> bool:
         point_ids = [point.id for point in search_results[0]]
 
         if not point_ids:
-            logger.warning(f"No points found for document {document_id}")
+            logger.warning("No points found for document {document_id}")
             return True
 
         # Delete points
@@ -1220,11 +1224,11 @@ def delete_document(document_id: str) -> bool:
             wait=True,
         )
 
-        logger.info(f"✅ Deleted {len(point_ids)} points for document {document_id}")
+        logger.info("✅ Deleted {len(point_ids)} points for document {document_id}")
         return True
 
     except Exception as e:
-        logger.error(f"❌ Failed to delete document {document_id}: {e}")
+        logger.error("❌ Failed to delete document {document_id}: {e}")
         return False
 
 
@@ -1301,7 +1305,7 @@ def get_collection_stats() -> dict:
         return stats
 
     except Exception as e:
-        logger.error(f"Failed to get collection stats: {e}")
+        logger.error("Failed to get collection stats: {e}")
         return {"error": str(e)}
 
 
@@ -1331,7 +1335,7 @@ def process_pdf_with_page_structure(
         bool: True if processing succeeded, False otherwise
     """
     try:
-        logger.info(f"Starting enhanced processing for {file_path}")
+        logger.info("Starting enhanced processing for {file_path}")
 
         # 1. Extract text with page structure
         pages_data = extract_pages_from_pdf(file_path)
@@ -1388,11 +1392,11 @@ def process_pdf_with_page_structure(
         # 4. Store embeddings with metadata
         store_embeddings_with_metadata(embeddings, chunk_data, document_id)
 
-        logger.info(f"Enhanced processing completed for document {document_id}")
+        logger.info("Enhanced processing completed for document {document_id}")
         return True
 
     except Exception as e:
-        logger.error(f"Enhanced processing failed for {file_path}: {e}")
+        logger.error("Enhanced processing failed for {file_path}: {e}")
         return False
 
 
@@ -1441,20 +1445,20 @@ def analyze_pdf_quality(file_path: str) -> dict:
         issues = []
 
         if corrupted_pages > 0:
-            issues.append(f"{corrupted_pages} corrupted pages")
+            issues.append("{corrupted_pages} corrupted pages")
             recommendations.append(
                 "PDF may be damaged - consider re-obtaining the source file"
             )
 
         if scanned_pages > 0:
-            issues.append(f"{scanned_pages} likely scanned pages")
+            issues.append("{scanned_pages} likely scanned pages")
             recommendations.append(
                 "Consider using OCR (Optical Character Recognition) for scanned pages"
             )
 
         if empty_pages > total_pages * 0.3:
             issues.append(
-                f"{empty_pages} empty pages ({empty_pages/total_pages*100:.1f}%)"
+                "{empty_pages} empty pages ({empty_pages/total_pages*100:.1f}%)"
             )
             recommendations.append(
                 "High number of empty pages - check PDF content quality"
@@ -1467,7 +1471,7 @@ def analyze_pdf_quality(file_path: str) -> dict:
             )
 
         if very_large_pages > 0:
-            issues.append(f"{very_large_pages} very large pages")
+            issues.append("{very_large_pages} very large pages")
             recommendations.append(
                 "Large pages will create many chunks - consider adjusting chunk size"
             )
@@ -1500,17 +1504,17 @@ def analyze_pdf_quality(file_path: str) -> dict:
 
         # Log summary
         logger.info(
-            f"PDF Quality Analysis: {status.upper()} (score: {quality_score:.2f})"
+            "PDF Quality Analysis: {status.upper()} (score: {quality_score:.2f})"
         )
         if issues:
-            logger.warning(f"Quality issues found: {', '.join(issues)}")
+            logger.warning("Quality issues found: {', '.join(issues)}")
         if recommendations:
-            logger.info(f"Recommendations: {'; '.join(recommendations)}")
+            logger.info("Recommendations: {'; '.join(recommendations)}")
 
         return analysis
 
     except Exception as e:
-        logger.error(f"Failed to analyze PDF quality for {file_path}: {e}")
+        logger.error("Failed to analyze PDF quality for {file_path}: {e}")
         return {
             "status": "failed",
             "error": str(e),

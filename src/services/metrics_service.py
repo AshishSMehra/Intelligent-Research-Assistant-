@@ -4,13 +4,26 @@ Metrics Service for the Intelligent Research Assistant.
 This service handles comprehensive logging, metrics collection, and monitoring.
 """
 
+import hashlib
 import json
-import time
+import os
+import random
+import re
+import uuid
 from collections import defaultdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import numpy as np
+import pandas as pd
+import requests
+from botocore.exceptions import NoCredentialsError
+from datasets import Dataset, DatasetDict
+from flask import request
 from loguru import logger
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
 
 class MetricsService:
@@ -48,12 +61,12 @@ class MetricsService:
         Returns:
             Request ID for tracking
         """
-        request_id = f"req_{int(time.time() * 1000)}"
 
-        self.metrics["requests"][f"{method}_{endpoint}"] += 1
+        request_id = str(uuid.uuid4())
+        self.metrics["requests"]["{method}_{endpoint}"] += 1
 
         logger.info(
-            f"Request {request_id}: {method} {endpoint} (User: {user_id or 'anonymous'})"
+            "Request {request_id}: {method} {endpoint} (User: {user_id or 'anonymous'})"
         )
 
         return request_id
@@ -67,7 +80,7 @@ class MetricsService:
             method: HTTP method
             duration: Response time in seconds
         """
-        key = f"{method}_{endpoint}"
+        key = "{method}_{endpoint}"
         self.metrics["response_times"][key].append(duration)
 
         # Keep only last 100 measurements
@@ -76,7 +89,7 @@ class MetricsService:
                 -100:
             ]
 
-        logger.debug(f"Response time for {key}: {duration:.3f}s")
+        logger.debug("Response time for {key}: {duration:.3f}s")
 
     def log_error(self, endpoint: str, error_type: str, error_message: str) -> None:
         """
@@ -87,9 +100,9 @@ class MetricsService:
             error_type: Type of error
             error_message: Error message
         """
-        self.metrics["errors"][f"{endpoint}_{error_type}"] += 1
+        self.metrics["errors"]["{endpoint}_{error_type}"] += 1
 
-        logger.error(f"Error in {endpoint}: {error_type} - {error_message}")
+        logger.error("Error in {endpoint}: {error_type} - {error_message}")
 
     def log_token_usage(
         self, model: str, tokens_used: int, cost_estimate: float = 0.0
@@ -105,7 +118,7 @@ class MetricsService:
         self.metrics["token_usage"][model] += tokens_used
 
         logger.info(
-            f"Token usage for {model}: {tokens_used} tokens (est. cost: ${cost_estimate:.4f})"
+            "Token usage for {model}: {tokens_used} tokens (est. cost: ${cost_estimate:.4f})"
         )
 
     def log_embedding_generation(self, model: str, count: int, duration: float) -> None:
@@ -120,7 +133,7 @@ class MetricsService:
         self.metrics["embedding_generations"][model] += count
 
         logger.info(
-            f"Embedding generation: {count} embeddings using {model} in {duration:.3f}s"
+            "Embedding generation: {count} embeddings using {model} in {duration:.3f}s"
         )
 
     def log_search_operation(
@@ -138,7 +151,7 @@ class MetricsService:
         self.metrics["search_operations"]["total_results"] += results_count
 
         logger.info(
-            f"Search operation: {results_count} results for query ({query_length} chars) in {duration:.3f}s"
+            "Search operation: {results_count} results for query ({query_length} chars) in {duration:.3f}s"
         )
 
     def log_llm_call(self, model: str, duration: float, success: bool) -> None:
@@ -150,15 +163,15 @@ class MetricsService:
             duration: Call duration in seconds
             success: Whether the call was successful
         """
-        self.metrics["llm_calls"][f"{model}_total"] += 1
+        self.metrics["llm_calls"]["{model}_total"] += 1
 
         if success:
-            self.metrics["llm_calls"][f"{model}_success"] += 1
+            self.metrics["llm_calls"]["{model}_success"] += 1
         else:
-            self.metrics["llm_calls"][f"{model}_failed"] += 1
+            self.metrics["llm_calls"]["{model}_failed"] += 1
 
         logger.info(
-            f"LLM call to {model}: {'success' if success else 'failed'} in {duration:.3f}s"
+            "LLM call to {model}: {'success' if success else 'failed'} in {duration:.3f}s"
         )
 
     def log_session_activity(
@@ -178,7 +191,7 @@ class MetricsService:
         self.session_metrics[session_id]["total_time"] += duration
 
         logger.debug(
-            f"Session {session_id}: Query {query_length} chars, {tokens_used} tokens, {duration:.3f}s"
+            "Session {session_id}: Query {query_length} chars, {tokens_used} tokens, {duration:.3f}s"
         )
 
     def get_metrics_summary(self) -> Dict[str, Any]:
@@ -252,11 +265,11 @@ class MetricsService:
             with open(filepath, "w") as f:
                 json.dump(export_data, f, indent=2)
 
-            logger.info(f"Metrics exported to {filepath}")
+            logger.info("Metrics exported to {filepath}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to export metrics: {e}")
+            logger.error("Failed to export metrics: {e}")
             return False
 
     def reset_metrics(self) -> None:
