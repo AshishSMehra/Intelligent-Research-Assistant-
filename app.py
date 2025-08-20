@@ -16,6 +16,7 @@ from botocore.exceptions import NoCredentialsError
 from datasets import Dataset, DatasetDict
 from flasgger import Swagger
 from flask import Flask, jsonify, make_response, request
+from flask_cors import CORS
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from transformers import DataCollatorWithPadding, Trainer, TrainingArguments, pipeline
 
@@ -51,6 +52,35 @@ os.makedirs(UPLOADS_DIR, exist_ok=True)
 # -----------------------------------------------------------------------------
 app = Flask(__name__)
 swagger = Swagger(app)
+
+# Configure CORS for secure frontend communication
+CORS(
+    app,
+    origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_headers=["Content-Type", "Authorization"],
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    supports_credentials=True,
+)
+
+# Add explicit OPTIONS handling for all routes
+@app.after_request
+def after_request(response):
+    response.headers.add("Access-Control-Allow-Origin", "http://localhost:3000")
+    response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
+    response.headers.add("Access-Control-Allow-Methods", "GET,PUT,POST,DELETE,OPTIONS")
+    response.headers.add("Access-Control-Allow-Credentials", "true")
+    return response
+
+# Add a global OPTIONS handler for all routes
+@app.route("/", defaults={"path": ""}, methods=["OPTIONS"])
+@app.route("/<path:path>", methods=["OPTIONS"])
+def handle_options(path):
+    response = jsonify({})
+    response.headers.add("Access-Control-Allow-Origin", "http://localhost:3000")
+    response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
+    response.headers.add("Access-Control-Allow-Methods", "GET,PUT,POST,DELETE,OPTIONS")
+    response.headers.add("Access-Control-Allow-Credentials", "true")
+    return response
 
 # Initialize the vector database at startup (compatible across Flask versions)
 logger.info("Initializing application and vector database...")
@@ -92,6 +122,145 @@ def health():
         description: The application status.
     """
     return jsonify({"status": "ok"})
+
+
+# =============================================================================
+# Authentication Endpoints
+# =============================================================================
+
+@app.route("/auth/login", methods=["POST", "OPTIONS"])
+def auth_login():
+    """
+    Authentication Login Endpoint
+    Handles user login with mock authentication.
+    ---
+    consumes:
+      - application/json
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            username:
+              type: string
+              description: Username
+            password:
+              type: string
+              description: Password
+    responses:
+      200:
+        description: Login successful
+      401:
+        description: Invalid credentials
+    """
+    if request.method == "OPTIONS":
+        return jsonify({})
+    
+    data = request.get_json()
+    username = data.get("username", "")
+    password = data.get("password", "")
+    
+    # Mock authentication - you can replace this with real authentication
+    valid_credentials = {
+        "admin": "admin123",
+        "researcher": "research123", 
+        "user": "user123",
+        "demo": "demo123"
+    }
+    
+    if username in valid_credentials and valid_credentials[username] == password:
+        # Generate mock tokens
+        access_token = f"mock_access_token_{username}_{int(time.time())}"
+        refresh_token = f"mock_refresh_token_{username}_{int(time.time())}"
+        
+        return jsonify({
+            "access_token": access_token,
+            "expires_in": 3600,
+            "refresh_token": refresh_token,
+            "token_type": "Bearer",
+            "user": {
+                "id": str(uuid.uuid4()),
+                "username": username,
+                "email": f"{username}@example.com",
+                "roles": ["admin"] if username == "admin" else ["user"],
+                "permissions": ["*"] if username == "admin" else ["read", "write"]
+            }
+        }), 200
+    else:
+        return jsonify({"error": "Invalid username or password"}), 401
+
+
+@app.route("/auth/me", methods=["GET"])
+def auth_me():
+    """
+    Get Current User Endpoint
+    Returns information about the currently authenticated user.
+    ---
+    responses:
+      200:
+        description: Current user information
+    """
+    # Mock user data - in a real app, this would come from the JWT token
+    return jsonify({
+        "id": str(uuid.uuid4()),
+        "username": "admin",
+        "email": "admin@example.com",
+        "roles": ["admin"],
+        "permissions": ["*"]
+    })
+
+
+@app.route("/auth/logout", methods=["POST"])
+def auth_logout():
+    """
+    Logout Endpoint
+    Handles user logout.
+    ---
+    responses:
+      200:
+        description: Logout successful
+    """
+    return jsonify({"message": "Logged out successfully"}), 200
+
+
+@app.route("/auth/refresh", methods=["POST"])
+def auth_refresh():
+    """
+    Refresh Token Endpoint
+    Refreshes the access token using a refresh token.
+    ---
+    consumes:
+      - application/json
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            refresh_token:
+              type: string
+              description: Refresh token
+    responses:
+      200:
+        description: Token refreshed successfully
+      401:
+        description: Invalid refresh token
+    """
+    data = request.get_json()
+    refresh_token = data.get("refresh_token", "")
+    
+    # Mock token refresh - in a real app, this would validate the refresh token
+    if refresh_token.startswith("mock_refresh_token_"):
+        return jsonify({
+            "access_token": f"mock_access_token_refreshed_{int(time.time())}",
+            "expires_in": 3600,
+            "token_type": "Bearer"
+        }), 200
+    else:
+        return jsonify({"error": "Invalid refresh token"}), 401
 
 
 @app.route("/model-info")

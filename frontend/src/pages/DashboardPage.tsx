@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { healthAPI } from '../utils/api';
 import { 
@@ -14,6 +15,7 @@ import {
 
 const DashboardPage = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [healthStatus, setHealthStatus] = useState<any>(null);
 
   useEffect(() => {
@@ -134,10 +136,10 @@ const DashboardPage = () => {
           {quickActions.map((action) => {
             const Icon = action.icon;
             return (
-              <a
+              <button
                 key={action.name}
-                href={action.href}
-                className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow"
+                onClick={() => navigate(action.href)}
+                className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer text-left w-full"
               >
                 <div className="p-6">
                   <div className="flex items-center">
@@ -154,7 +156,7 @@ const DashboardPage = () => {
                     </div>
                   </div>
                 </div>
-              </a>
+              </button>
             );
           })}
         </div>
@@ -168,14 +170,18 @@ const DashboardPage = () => {
         <div className="px-6 py-4">
           <div className="space-y-4">
             {[
-              { action: 'Document uploaded', time: '2 minutes ago', icon: Upload },
-              { action: 'Chat session started', time: '15 minutes ago', icon: MessageSquare },
-              { action: 'Search query executed', time: '1 hour ago', icon: Search },
-              { action: 'Agent configuration updated', time: '2 hours ago', icon: Bot },
+              { action: 'Document uploaded', time: '2 minutes ago', icon: Upload, route: '/upload' },
+              { action: 'Chat session started', time: '15 minutes ago', icon: MessageSquare, route: '/chat' },
+              { action: 'Search query executed', time: '1 hour ago', icon: Search, route: '/search' },
+              { action: 'Agent configuration updated', time: '2 hours ago', icon: Bot, route: '/agents' },
             ].map((item, index) => {
               const Icon = item.icon;
               return (
-                <div key={index} className="flex items-center space-x-3">
+                <button
+                  key={index}
+                  onClick={() => navigate(item.route)}
+                  className="flex items-center space-x-3 w-full text-left hover:bg-gray-50 p-2 rounded transition-colors"
+                >
                   <div className="flex-shrink-0">
                     <Icon className="h-5 w-5 text-gray-400" />
                   </div>
@@ -183,7 +189,7 @@ const DashboardPage = () => {
                     <p className="text-sm text-gray-900">{item.action}</p>
                     <p className="text-xs text-gray-500">{item.time}</p>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
